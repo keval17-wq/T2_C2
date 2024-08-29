@@ -14,6 +14,8 @@ public class MCP {
     private static final int ACK_TIMEOUT = 3000; // 3 seconds for acknowledgment timeout
 
     private final Map<String, PendingMessage> pendingMessages = new HashMap<>();
+    private final Map<String, InetAddress> connectedClients = new HashMap<>();
+    private final Map<String, Integer> clientPorts = new HashMap<>();
 
     public static void main(String[] args) {
         new MCP().start();
@@ -36,12 +38,59 @@ public class MCP {
     }
 
     private void handleMessage(String message, InetAddress senderAddress, int senderPort, DatagramSocket socket) {
+        String clientKey = senderAddress.toString() + ":" + senderPort;
+        if (!connectedClients.containsKey(clientKey)) {
+            connectedClients.put(clientKey, senderAddress);
+            clientPorts.put(clientKey, senderPort);
+        }
+
         if (message.startsWith("ACK")) {
             pendingMessages.remove(message.split(":")[1].trim());
-            System.out.println("Acknowledgment received.");
+            System.out.println("Acknowledgment received from " + clientKey);
         } else {
-            sendResponse("Acknowledged: " + message, senderAddress, senderPort, socket);
+            processCommand(message, senderAddress, senderPort, socket);
         }
+    }
+
+    private void processCommand(String message, InetAddress senderAddress, int senderPort, DatagramSocket socket) {
+        if (message.contains("START")) {
+            handleStartCommand(message, senderAddress, senderPort, socket);
+        } else if (message.contains("STOP")) {
+            handleStopCommand(message, senderAddress, senderPort, socket);
+        } else if (message.contains("STATUS")) {
+            handleStatusCommand(message, senderAddress, senderPort, socket);
+        } else if (message.contains("DOOR")) {
+            handleDoorCommand(message, senderAddress, senderPort, socket);
+        } else if (message.contains("IRLD")) {
+            handleIrLedCommand(message, senderAddress, senderPort, socket);
+        } else {
+            sendResponse("Unknown command received", senderAddress, senderPort, socket);
+        }
+    }
+
+    private void handleStartCommand(String message, InetAddress senderAddress, int senderPort, DatagramSocket socket) {
+        System.out.println("Handling START command");
+        sendResponse("START command processed", senderAddress, senderPort, socket);
+    }
+
+    private void handleStopCommand(String message, InetAddress senderAddress, int senderPort, DatagramSocket socket) {
+        System.out.println("Handling STOP command");
+        sendResponse("STOP command processed", senderAddress, senderPort, socket);
+    }
+
+    private void handleStatusCommand(String message, InetAddress senderAddress, int senderPort, DatagramSocket socket) {
+        System.out.println("Handling STATUS command");
+        sendResponse("STATUS command processed", senderAddress, senderPort, socket);
+    }
+
+    private void handleDoorCommand(String message, InetAddress senderAddress, int senderPort, DatagramSocket socket) {
+        System.out.println("Handling DOOR command");
+        sendResponse("DOOR command processed", senderAddress, senderPort, socket);
+    }
+
+    private void handleIrLedCommand(String message, InetAddress senderAddress, int senderPort, DatagramSocket socket) {
+        System.out.println("Handling IR LED command");
+        sendResponse("IR LED command processed", senderAddress, senderPort, socket);
     }
 
     private void sendResponse(String response, InetAddress recipientAddress, int recipientPort, DatagramSocket socket) {
