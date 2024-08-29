@@ -14,8 +14,7 @@ public class MCP {
     private static final int ACK_TIMEOUT = 3000; // 3 seconds for acknowledgment timeout
 
     private final Map<String, PendingMessage> pendingMessages = new HashMap<>();
-    private final Map<String, InetAddress> connectedClients = new HashMap<>();
-    private final Map<String, Integer> clientPorts = new HashMap<>();
+    private final Map<String, String> componentStates = new HashMap<>(); // Tracks the state of each component
 
     public static void main(String[] args) {
         new MCP().start();
@@ -32,65 +31,50 @@ public class MCP {
                 handleMessage(new String(packet.getData(), 0, packet.getLength()), packet.getAddress(), packet.getPort(), socket);
             }
         } catch (Exception e) {
-            System.err.println("Error in MCP: " + e.getMessage());
-            e.printStackTrace();
+            logError("Error in MCP: " + e.getMessage());
         }
     }
 
     private void handleMessage(String message, InetAddress senderAddress, int senderPort, DatagramSocket socket) {
-        String clientKey = senderAddress.toString() + ":" + senderPort;
-        if (!connectedClients.containsKey(clientKey)) {
-            connectedClients.put(clientKey, senderAddress);
-            clientPorts.put(clientKey, senderPort);
-        }
-
         if (message.startsWith("ACK")) {
             pendingMessages.remove(message.split(":")[1].trim());
-            System.out.println("Acknowledgment received from " + clientKey);
+            log("Acknowledgment received.");
         } else {
             processCommand(message, senderAddress, senderPort, socket);
         }
     }
 
-    private void processCommand(String message, InetAddress senderAddress, int senderPort, DatagramSocket socket) {
-        if (message.contains("START")) {
-            handleStartCommand(message, senderAddress, senderPort, socket);
-        } else if (message.contains("STOP")) {
-            handleStopCommand(message, senderAddress, senderPort, socket);
-        } else if (message.contains("STATUS")) {
-            handleStatusCommand(message, senderAddress, senderPort, socket);
-        } else if (message.contains("DOOR")) {
-            handleDoorCommand(message, senderAddress, senderPort, socket);
-        } else if (message.contains("IRLD")) {
-            handleIrLedCommand(message, senderAddress, senderPort, socket);
-        } else {
-            sendResponse("Unknown command received", senderAddress, senderPort, socket);
+    private void processCommand(String command, InetAddress senderAddress, int senderPort, DatagramSocket socket) {
+        String response = "Invalid Command";
+
+        if (command.equalsIgnoreCase("START")) {
+            response = "BR Started";
+            updateState(senderAddress.getHostAddress(), "STARTED");
+        } else if (command.equalsIgnoreCase("STOP")) {
+            response = "BR Stopped";
+            updateState(senderAddress.getHostAddress(), "STOPPED");
+        } else if (command.equalsIgnoreCase("STATUS")) {
+            response = "Current State: " + componentStates.getOrDefault(senderAddress.getHostAddress(), "UNKNOWN");
+        } else if (command.equalsIgnoreCase("DOOR OPEN")) {
+            response = "Doors Opened";
+            updateState(senderAddress.getHostAddress(), "DOOR_OPENED");
+        } else if (command.equalsIgnoreCase("DOOR CLOSE")) {
+            response = "Doors Closed";
+            updateState(senderAddress.getHostAddress(), "DOOR_CLOSED");
+        } else if (command.equalsIgnoreCase("IRLD ON")) {
+            response = "IR LED On";
+            updateState(senderAddress.getHostAddress(), "IRLD_ON");
+        } else if (command.equalsIgnoreCase("IRLD OFF")) {
+            response = "IR LED Off";
+            updateState(senderAddress.getHostAddress(), "IRLD_OFF");
         }
+
+        sendResponse(response, senderAddress, senderPort, socket);
     }
 
-    private void handleStartCommand(String message, InetAddress senderAddress, int senderPort, DatagramSocket socket) {
-        System.out.println("Handling START command");
-        sendResponse("START command processed", senderAddress, senderPort, socket);
-    }
-
-    private void handleStopCommand(String message, InetAddress senderAddress, int senderPort, DatagramSocket socket) {
-        System.out.println("Handling STOP command");
-        sendResponse("STOP command processed", senderAddress, senderPort, socket);
-    }
-
-    private void handleStatusCommand(String message, InetAddress senderAddress, int senderPort, DatagramSocket socket) {
-        System.out.println("Handling STATUS command");
-        sendResponse("STATUS command processed", senderAddress, senderPort, socket);
-    }
-
-    private void handleDoorCommand(String message, InetAddress senderAddress, int senderPort, DatagramSocket socket) {
-        System.out.println("Handling DOOR command");
-        sendResponse("DOOR command processed", senderAddress, senderPort, socket);
-    }
-
-    private void handleIrLedCommand(String message, InetAddress senderAddress, int senderPort, DatagramSocket socket) {
-        System.out.println("Handling IR LED command");
-        sendResponse("IR LED command processed", senderAddress, senderPort, socket);
+    private void updateState(String componentId, String state) {
+        componentStates.put(componentId, state);
+        log("Updated state of " + componentId + " to " + state);
     }
 
     private void sendResponse(String response, InetAddress recipientAddress, int recipientPort, DatagramSocket socket) {
@@ -105,9 +89,16 @@ public class MCP {
 
             new Timer().schedule(new RetransmissionTask(pendingMessage), ACK_TIMEOUT, ACK_TIMEOUT);
         } catch (Exception e) {
-            System.err.println("Error sending response: " + e.getMessage());
-            e.printStackTrace();
+            logError("Error sending response: " + e.getMessage());
         }
+    }
+
+    private void log(String message) {
+        System.out.println("[LOG] " + message);
+    }
+
+    private void logError(String error) {
+        System.err.println("[ERROR] " + error);
     }
 
     private static class PendingMessage {
@@ -139,15 +130,14 @@ public class MCP {
 
             if (pendingMessage.retries < 3) {
                 try {
-                    System.out.println("Retransmitting message ID: " + pendingMessage.messageId);
+                    log("Retransmitting message ID: " + pendingMessage.messageId);
                     pendingMessage.socket.send(pendingMessage.packet);
                     pendingMessage.retries++;
                 } catch (Exception e) {
-                    System.err.println("Error retransmitting message: " + e.getMessage());
-                    e.printStackTrace();
+                    logError("Error retransmitting message: " + e.getMessage());
                 }
             } else {
-                System.out.println("Max retries reached for message ID: " + pendingMessage.messageId + ". Giving up.");
+                logError("Max retries reached for message ID: " + pendingMessage.messageId + ". Giving up.");
                 pendingMessages.remove(pendingMessage.messageId);
                 this.cancel();
             }
