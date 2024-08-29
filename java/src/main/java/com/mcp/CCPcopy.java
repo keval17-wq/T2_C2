@@ -4,7 +4,7 @@ import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
 
-public class CCP {
+public class CCPcopy {
 
     private static final String MCP_IP = "127.0.0.1";  // Replace with your MCP's IP address
     private static final int MCP_PORT = 2001;               // The port MCP is listening on
