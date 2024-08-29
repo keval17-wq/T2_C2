@@ -12,13 +12,13 @@ public class CCPcopy {
     public static void main(String[] args) {
         try (DatagramSocket socket = new DatagramSocket()) {
             // Initialize communication with the MCP
-            sendCommand(socket, "CCIN", "CC01");
+            sendCommand(socket, "CCIN", "CC02");
 
             // Wait for acknowledgment or further commands from MCP
             receiveResponse(socket);
 
             // Send status update to MCP
-            sendCommand(socket, "STAT", "CC01", "STOPPED");
+            sendCommand(socket, "STAT", "CC02", "STOPPED");
 
             // Receive further instructions from MCP
             receiveResponse(socket);
