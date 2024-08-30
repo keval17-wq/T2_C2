@@ -10,6 +10,7 @@ public class MCP {
     private static final int MCP_PORT = 2001;
     private static final int BUFFER_SIZE = 1024;
     private static final int ACK_TIMEOUT = 3000; // 3 seconds for acknowledgment timeout
+    public Map<String, ClientInfo> addressMap = new HashMap<String , ClientInfo>();
 
     private final Map<String, PendingMessage> pendingMessages = new HashMap<>();
     private final StateManager stateManager = new StateManager();
@@ -36,9 +37,22 @@ public class MCP {
 
     private void handleMessage(DatagramPacket pack, InetAddress senderAddress, int senderPort, DatagramSocket socket) {
         
-            String response = commandProcessor.processCommand(commandProcessor.parseCommand(pack), senderAddress); //send command to processor here
-            sendResponse(response, senderAddress, senderPort, socket); //try to send command to host here
-        
+        try{
+            //update map with info here TODO
+            Command c = commandProcessor.parseCommand(pack);
+            
+            String response = commandProcessor.processCommand(c, senderAddress); //This Logic needs to be CHANGED
+            sendResponse(response, senderAddress, senderPort, socket); //send command to processor here
+            addressMap.put(c.getClientId(), new ClientInfo(senderAddress, senderPort));//Map client ID and senderaddress/port
+            //try to send command to host here
+        //process command returns the string message that should be sent. not in full JSON format yet
+        //as the command processor needs to be flehsed out to create each command and message type. So for now only
+        //returns a single vary basic string
+        }
+
+        catch (Exception e){
+            System.out.println("Failed to build a response in handleMessage");
+        }
     }
 
     private void sendResponse(String response, InetAddress recipientAddress, int recipientPort, DatagramSocket socket) {

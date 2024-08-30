@@ -17,8 +17,13 @@ public class CommandProcessor {
     public String processCommand(Command command, InetAddress senderAddress) { //Process command and update state
         String response = "Invalid Command"; //remember we have to call parse command
         //first, then we call process command! better modularity
+        //and get the clienttype so we can handle diferent types
+        //this needs to send an ENTIRE json command string
+        StringBuilder build = new StringBuilder();
 
-        switch (command.getMessage()) { //just get the ACTION part here
+        //if statemetns for each client type
+
+        switch (command.getStatus()) { //just get the ACTION part here
             case "START":
                 response = "BR Started";
                 stateManager.updateState(senderAddress.getHostAddress(), "STARTED");
