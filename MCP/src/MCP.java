@@ -42,7 +42,10 @@ public class MCP {
             Command c = commandProcessor.parseCommand(pack);
             
             String response = commandProcessor.processCommand(c, senderAddress); //This Logic needs to be CHANGED
-            sendResponse(response, senderAddress, senderPort, socket); //send command to processor here
+            System.out.println(response);
+//Command processor prints the response: IE an acknowledgement
+
+             sendResponse(TOBEDETERMINED, senderAddress, senderPort, socket); //send command to processor here
             addressMap.put(c.getClientId(), new ClientInfo(senderAddress, senderPort));//Map client ID and senderaddress/port
             //try to send command to host here
         //process command returns the string message that should be sent. not in full JSON format yet
@@ -69,7 +72,21 @@ public class MCP {
         } catch (Exception e) {
             Logger.logError("Error sending response: " + e.getMessage());
         }
+
     }
+
+    public ClientInfo getAddressMapClientInfo(String o){ //gets the ip and port of specific client ID
+        try{
+            return addressMap.get(o);
+        }
+
+        catch(Exception e){
+            e.printStackTrace();
+            System.err.println("Unable to get result " + o + " from map of client info");
+       
+        }
+    }
+
 
     private static class PendingMessage {
         DatagramPacket packet;

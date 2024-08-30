@@ -2,12 +2,12 @@
 
 public class CommandDispatcher {
 
-    public void dispatchCommand(String clientType, String command) {
-        switch (clientType) {
-            case "CCP":
+    public void dispatchCommand(Command command) {
+        switch (Command.get(command.clientType)) {
+            case "ccp":
                 handleCCPCommand(command);
                 break;
-            case "Station":
+            case "station":
                 handleStationCommand(command);
                 break;
             case "LEDController":
@@ -19,17 +19,21 @@ public class CommandDispatcher {
         }
     }
 
-    private void handleCCPCommand(String command) {
+    private void handleCCPCommand(Command command) {
         // Implement CCP-specific command handling logic here
-        System.out.println("Handling CCP command: " + command);
+        //handle each payload here
+        //update mapping, 
+        
     }
 
-    private void handleStationCommand(String command) {
+    private void handleStationCommand(Command command) {
         // Implement Station-specific command handling logic here
+        //update block system
+        
         System.out.println("Handling Station command: " + command);
     }
 
-    private void handleLEDControllerCommand(String command) {
+    private void handleLEDControllerCommand(Command command) {
         // Implement LED Controller-specific command handling logic here
         System.out.println("Handling LED Controller command: " + command);
     }

@@ -19,7 +19,6 @@ public class CommandProcessor {
         //first, then we call process command! better modularity
         //and get the clienttype so we can handle diferent types
         //this needs to send an ENTIRE json command string
-        StringBuilder build = new StringBuilder();
 
         //if statemetns for each client type
 
