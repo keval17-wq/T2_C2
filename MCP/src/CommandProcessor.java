@@ -1,4 +1,3 @@
-package main.java.com.mcp;
 
 import java.net.InetAddress;
 

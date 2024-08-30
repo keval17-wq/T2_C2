@@ -1,5 +1,3 @@
-package main.java.com.mcp;
-
 import java.util.HashMap;
 import java.util.Map;
 

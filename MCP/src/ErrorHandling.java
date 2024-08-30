@@ -1,7 +1,4 @@
-package main.java.com.mcp;
-
 public class ErrorHandling {
-
     public void handleError(String errorMessage) {
         // Log the error
         System.out.println("Error: " + errorMessage);
