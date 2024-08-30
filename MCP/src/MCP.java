@@ -27,21 +27,18 @@ public class MCP {
             while (true) {
                 DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
                 socket.receive(packet);
-                handleMessage(new String(packet.getData(), 0, packet.getLength()), packet.getAddress(), packet.getPort(), socket);
+                handleMessage(packet, packet.getAddress(), packet.getPort(), socket);
             }
         } catch (Exception e) {
             Logger.logError("Error in MCP: " + e.getMessage());
         }
     }
 
-    private void handleMessage(String message, InetAddress senderAddress, int senderPort, DatagramSocket socket) {
-        if (message.startsWith("ACK")) {
-            pendingMessages.remove(message.split(":")[1].trim());
-            Logger.log("Acknowledgment received.");
-        } else {
-            String response = commandProcessor.processCommand(message, senderAddress);
-            sendResponse(response, senderAddress, senderPort, socket);
-        }
+    private void handleMessage(DatagramPacket pack, InetAddress senderAddress, int senderPort, DatagramSocket socket) {
+        
+            String response = commandProcessor.processCommand(commandProcessor.parseCommand(pack), senderAddress); //send command to processor here
+            sendResponse(response, senderAddress, senderPort, socket); //try to send command to host here
+        
     }
 
     private void sendResponse(String response, InetAddress recipientAddress, int recipientPort, DatagramSocket socket) {

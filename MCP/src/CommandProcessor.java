@@ -1,5 +1,7 @@
 
+import java.net.DatagramPacket;
 import java.net.InetAddress;
+import com.google.gson.*;
 
 public class CommandProcessor {
     private final StateManager stateManager;
@@ -10,10 +12,13 @@ public class CommandProcessor {
         this.logger = logger;
     }
 
-    public String processCommand(String command, InetAddress senderAddress) {
-        String response = "Invalid Command";
+   
 
-        switch (command.toUpperCase()) {
+    public String processCommand(Command command, InetAddress senderAddress) { //Process command and update state
+        String response = "Invalid Command"; //remember we have to call parse command
+        //first, then we call process command! better modularity
+
+        switch (command.getMessage()) { //just get the ACTION part here
             case "START":
                 response = "BR Started";
                 stateManager.updateState(senderAddress.getHostAddress(), "STARTED");
@@ -48,5 +53,22 @@ public class CommandProcessor {
 
         logger.log("Processed command: " + command + " from " + senderAddress.getHostAddress());
         return response;
+    }
+
+    public Command parseCommand(DatagramPacket packet){
+    Command command = new Command();
+
+        try{
+        String com = new String(packet.getData(), 0, packet.getLength());
+        Gson gson = new Gson();
+         command = gson.fromJson(com, Command.class);
+        }
+
+        catch (Exception e) {
+            e.printStackTrace();
+            return null; // or handle the error appropriately
+        }
+return command;
+//now we have an object that nicely can get each field
     }
 }
