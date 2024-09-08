@@ -11,7 +11,7 @@ ccp_ports = {
     'BR05': ('192.168.1.105', 2006)
 }
 
-# Static port mapping for 10 stations, with all acting as checkpoints
+# Static port mapping for 10 stations, all acting as checkpoints
 station_ports = {
     'ST01': ('192.168.1.201', 4001),  
     'ST02': ('192.168.1.202', 4002),  
@@ -61,16 +61,28 @@ def handle_message(address, message):
 def handle_ccp_message(address, message):
     log_event("CCP Message Received", message)
     ccp_id = message['client_id']
-    current_block = message['current_block']  # BR's current block
-    
-    # Check if the BR is approaching a station
-    if 'station' in track_map[current_block]:
-        station_id = track_map[current_block]['station']
-        stop_br_at_station_or_checkpoint(ccp_id, station_id)
-    
-    # Check if there's a turn and handle speed accordingly
-    if track_map[current_block].get('turn'):
-        handle_turn(ccp_id, track_map[current_block]['turn_severity'])
+
+    # Handle initial connection 'CCIN'
+    if message['message'] == 'CCIN':
+        print(f"CCP {ccp_id} has connected.")
+        ack_message = {"client_type": "mcp", "message": "ACK", "status": "INITIALIZED"}
+        send_udp_message(address, ack_message)
+        return
+
+    # Handle status updates with 'current_block'
+    if 'current_block' in message:
+        current_block = message['current_block']
+        
+        # Check if the BR is approaching a station
+        if 'station' in track_map[current_block]:
+            station_id = track_map[current_block]['station']
+            stop_br_at_station_or_checkpoint(ccp_id, station_id)
+        
+        # Check if there's a turn and handle speed accordingly
+        if track_map[current_block].get('turn'):
+            handle_turn(ccp_id, track_map[current_block]['turn_severity'])
+    else:
+        print(f"Message from CCP {ccp_id} does not include 'current_block'.")
 
 def stop_br_at_station_or_checkpoint(ccp_id, station_id):
     # Send stop command to CCP (Blade Runner)
@@ -82,8 +94,8 @@ def stop_br_at_station_or_checkpoint(ccp_id, station_id):
     # Open station doors
     control_station_doors(station_id, "OPEN")
     
-    # Wait for a fixed time
-    time.sleep(10)  # Stop time at station (10 seconds for example)
+    # Wait for a fixed time (simulating station stop)
+    time.sleep(10)  # Stop time at station
     
     # Close station doors
     control_station_doors(station_id, "CLOSE")
