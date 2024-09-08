@@ -28,6 +28,7 @@ def handle_ccp_message(address, message):
     # Example: Send a command back to CCP on port 2002
     response = {"client_type": "mcp", "message": "COMMAND", "action": "EXECUTE"}
     send_udp_message((address[0], 2002), response)  # Send command to CCP on port 2002
+    
 
 def handle_station_message(address, message):
     log_event("Station Message Received", message)
