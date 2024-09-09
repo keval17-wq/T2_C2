@@ -76,7 +76,7 @@ def handle_ccp_message(address, message):
         # Check if the BR is approaching a station
         if 'station' in track_map[current_block]:
             station_id = track_map[current_block]['station']
-            stop_br_at_station_or_checkpoint(ccp_id, station_id)
+            stop_at_station(ccp_id, station_id)
         
         # Check if there's a turn and handle speed accordingly
         if track_map[current_block].get('turn'):
@@ -84,7 +84,7 @@ def handle_ccp_message(address, message):
     else:
         print(f"Message from CCP {ccp_id} does not include 'current_block'.")
 
-def stop_br_at_station_or_checkpoint(ccp_id, station_id):
+def stop_at_station(ccp_id, station_id):
     # Send stop command to CCP (Blade Runner)
     stop_command = {"client_type": "mcp", "message": "EXEC", "action": "STOP"}
     send_udp_message(ccp_ports[ccp_id], stop_command)
