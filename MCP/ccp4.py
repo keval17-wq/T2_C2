@@ -2,7 +2,7 @@ from utils import create_udp_socket, send_udp_message, receive_udp_message, log_
 
 def start_ccp(ccp_id):
     print(f"Starting CCP for Blade Runner {ccp_id}...")
-    ccp_socket = create_udp_socket(3002)  # Using port 2001 to listen and send messages
+    ccp_socket = create_udp_socket(3004)  # Using port 2001 to listen and send messages
     send_initialization(ccp_socket, ccp_id)
 
     while True:
@@ -24,4 +24,4 @@ def handle_mcp_command(message):
     print(f"Executing MCP command: {message}")
 
 if __name__ == "__main__":
-    start_ccp("BR2")
+    start_ccp("BR4")
