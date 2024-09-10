@@ -5,7 +5,7 @@ import time
 
 # Static port mapping for CCPs (Blade Runners)
 ccp_ports = {
-    'BR01': ('127.0.0.1', 2002),
+    'BR01': ('192.168.1.101', 2002),
     'BR02': ('192.168.1.102', 2003),
     'BR03': ('192.168.1.103', 2004),
     'BR04': ('192.168.1.104', 2005),
@@ -61,7 +61,7 @@ def start_mcp():
 def emergency_command_handler():
     while True:
         # Simulate emergency command handling
-        emergency_input = input("Enter emergency command (e.g., 'emer' or 'emer'): ")
+        emergency_input = input("Enter emergency command (e.g., 'stop' for STOP_ALL): ")
         if emergency_input == "stop":
             broadcast_emergency_command("STOP_ALL")
         time.sleep(1)
