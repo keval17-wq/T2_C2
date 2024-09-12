@@ -1,29 +1,29 @@
 import socket
 import threading
-from utils import create_udp_socket, receive_udp_message, send_udp_message, log_event
+from utils import create_socket, receive_message, send_message, log_event
 import time
 
 # Static port mapping for CCPs (Blade Runners)
 ccp_ports = {
-    'BR01': ('192.168.1.101', 2002),
-    'BR02': ('192.168.1.102', 2003),
-    'BR03': ('192.168.1.103', 2004),
-    'BR04': ('192.168.1.104', 2005),
-    'BR05': ('192.168.1.105', 2006)
+    'BR01': ('127.0.0.1', 2002),
+    'BR02': ('127.0.0.1', 2003),
+    'BR03': ('127.0.0.1', 2004),
+    'BR04': ('127.0.0.1', 2005),
+    'BR05': ('127.0.0.1', 2006)
 }
 
 # Static port mapping for 10 stations
 station_ports = {
-    'ST01': ('192.168.1.201', 4001),
-    'ST02': ('192.168.1.202', 4002),
-    'ST03': ('192.168.1.203', 4003),
-    'ST04': ('192.168.1.204', 4004),
-    'ST05': ('192.168.1.205', 4005),
-    'ST06': ('192.168.1.206', 4006),
-    'ST07': ('192.168.1.207', 4007),
-    'ST08': ('192.168.1.208', 4008),
-    'ST09': ('192.168.1.209', 4009),
-    'ST10': ('192.168.1.210', 4010)
+    'ST01': ('127.0.0.1', 4001),
+    'ST02': ('127.0.0.1', 4002),
+    'ST03': ('127.0.0.1', 4003),
+    'ST04': ('127.0.0.1', 4004),
+    'ST05': ('127.0.0.1', 4005),
+    'ST06': ('127.0.0.1', 4006),
+    'ST07': ('127.0.0.1', 4007),
+    'ST08': ('127.0.0.1', 4008),
+    'ST09': ('127.0.0.1', 4009),
+    'ST10': ('127.0.0.1', 4010)
 }
 
 # Track map for block management, handling turns and checkpoints
@@ -40,38 +40,71 @@ track_map = {
     'block_10': {'station': 'ST10', 'next_block': 'block_1', 'turn': False}
 }
 
+# Track occupancy to map which block is occupied by which BR
+track_occupancy = {}
+
 # Start MCP server and emergency handler thread
 def start_mcp():
     print("Starting MCP...")
-    mcp_socket = create_udp_socket(2001)  # MCP listens on port 2001
+    mcp_socket = create_socket(2001)  # MCP listens on port 2001
     print("MCP listening on port 2001")
-    
+
     # Start the emergency command thread
-    emergency_thread = threading.Thread(target=emergency_command_handler)
-    emergency_thread.daemon = True  # Ensure this thread stops when the main program exits
-    emergency_thread.start()
+    emergency = threading.Thread(target=emergency_command_handler)
+    emergency.daemon = True  # Ensure this thread stops when the main program exits
+    emergency.start()
 
     while True:
         print("Waiting for messages...")
-        message, address = receive_udp_message(mcp_socket)
+        message, address = receive_message(mcp_socket)
         print(f"Message received from {address}")
         handle_message(address, message)
 
 # Handle emergency commands (running in parallel)
 def emergency_command_handler():
     while True:
-        # Simulate emergency command handling
-        emergency_input = input("Enter emergency command (e.g., 'stop' for STOP_ALL): ")
-        if emergency_input == "stop":
-            broadcast_emergency_command("STOP_ALL")
+        # Simulate emergency command handling, with target BR selection
+        emergency_input = input("Enter command (e.g., 'BR01 STOP' or 'ALL START'): ").strip()
+        if emergency_input:
+            process_command(emergency_input)
+
         time.sleep(1)
 
-# Broadcast an emergency command to all CCPs
-def broadcast_emergency_command(action):
-    emergency_command = {"client_type": "mcp", "message": "EXEC", "action": action}
+# Process the user input command
+def process_command(emergency_input):
+    try:
+        # Parse the input command
+        parts = emergency_input.split()
+        if len(parts) == 2:
+            target, action = parts
+            if target.upper() == 'ALL':
+                # Broadcast to all BRs
+                broadcast_command(action)
+            elif target.startswith("BR"):
+                # Send command to specific BR
+                send_command_to_br(target, action)
+            else:
+                print("Invalid target. Use 'BR01' or 'ALL'.")
+        else:
+            print("Invalid input format. Use 'BR01 START' or 'ALL STOP'.")
+    except Exception as e:
+        print(f"Error processing command: {e}")
+
+# Broadcast a command to all CCPs
+def broadcast_command(action):
+    command = {"client_type": "mcp", "message": "EXEC", "action": action.upper()}
     for ccp_id, address in ccp_ports.items():
-        send_udp_message(address, emergency_command)
-    print(f"Emergency command '{action}' sent to all CCPs.")
+        send_message(address, command)
+    print(f"Broadcast command '{action}' sent to all CCPs.")
+
+# Send a specific command to a single BR
+def send_command_to_br(br_id, action):
+    if br_id in ccp_ports:
+        command = {"client_type": "mcp", "message": "EXEC", "action": action.upper()}
+        send_message(ccp_ports[br_id], command)
+        print(f"Command '{action}' sent to {br_id}.")
+    else:
+        print(f"BR ID {br_id} not recognized.")
 
 # Handle incoming messages
 def handle_message(address, message):
@@ -81,6 +114,9 @@ def handle_message(address, message):
     elif message['client_type'] == 'station':
         print(f"Handling Station message from {address}")
         handle_station_message(address, message)
+    elif message['client_type'] == 'checkpoint':
+        print(f"Handling Checkpoint message from {address}")
+        handle_checkpoint_message(address, message)
 
 # Handle CCP messages
 def handle_ccp_message(address, message):
@@ -88,22 +124,12 @@ def handle_ccp_message(address, message):
     ccp_id = message['client_id']
 
     if message['message'] == 'CCIN':
-        # Handle initialization
+        # Handle initialization: Send ACK first
         print(f"CCP {ccp_id} initialized.")
-        # Send START command immediately after initialization
-        start_command = {"client_type": "mcp", "message": "EXEC", "action": "START"}
-        send_udp_message(ccp_ports[ccp_id], start_command)
-        print(f"START command sent to CCP {ccp_id}.")
+        ack_command = {"client_type": "mcp", "message": "ACK", "status": "RECEIVED"}
+        send_message(ccp_ports[ccp_id], ack_command)  # Acknowledge initialization
     
-    current_block = message.get('current_block')  # Optional: Handle other messages related to blocks
-    if current_block:
-        # Check if the BR is approaching a station
-        if 'station' in track_map[current_block]:
-            station_id = track_map[current_block]['station']
-            stop_br_at_station(ccp_id, station_id)
-        # Handle turns
-        if track_map[current_block].get('turn'):
-            handle_turn(ccp_id, track_map[current_block]['turn_severity'])
+    # No need for CCP to send block info as MCP will determine that from checkpoints.
 
 # Handle Station messages
 def handle_station_message(address, message):
@@ -111,37 +137,57 @@ def handle_station_message(address, message):
     station_id = message['client_id']
     print(f"Station message handled from {station_id}: {message}")
 
-# Handle Blade Runner stops
-def stop_br_at_station(ccp_id, station_id):
+# Handle Checkpoint messages (TRIP signal)
+def handle_checkpoint_message(address, message):
+    log_event("Checkpoint Message Received", message)
+    checkpoint_id = message['client_id']
+    
+    # Assuming TRIP message contains which block was tripped
+    if message['message'] == 'TRIP':
+        tripped_block = message['block_id']
+        print(f"TRIP signal received from {checkpoint_id}, block {tripped_block}")
+        
+        # Determine which BR is in this block
+        if tripped_block in track_occupancy:
+            br_id = track_occupancy[tripped_block]
+            # Send SLOW command to BR before full stop
+            handle_slow(br_id)
+            stop_br_at_station(br_id, track_map[tripped_block]['station'])
+
+# Handle BR stops at stations
+def stop_br_at_station(br_id, station_id):
     stop_command = {"client_type": "mcp", "message": "EXEC", "action": "STOP"}
-    send_udp_message(ccp_ports[ccp_id], stop_command)
-
+    send_message(ccp_ports[br_id], stop_command)
+    
     if track_map.get(station_id, {}).get('is_checkpoint'):
-        print(f"BR {ccp_id} stopping briefly at checkpoint {station_id}")
-        time.sleep(3)  # Brief stop at checkpoint (3 seconds)
+        print(f"BR {br_id} stopping briefly at checkpoint {station_id}")
+        time.sleep(3)  # Brief stop
     else:
-        print(f"BR {ccp_id} stopping at station {station_id}")
+        print(f"BR {br_id} stopping at station {station_id}")
         control_station_doors(station_id, "OPEN")
-        time.sleep(10)  # Wait at station
+        time.sleep(10)  # Wait time
         control_station_doors(station_id, "CLOSE")
-
-    next_block = track_map[station_id]['next_block']
-    move_to_next_station(ccp_id, next_block)
+    
+    # Broadcast START again to all BRs after each station stop
+    broadcast_start()
 
 # Control station doors
 def control_station_doors(station_id, action):
     door_command = {"client_type": "mcp", "message": "DOOR", "action": action}
-    send_udp_message(station_ports[station_id], door_command)
+    send_message(station_ports[station_id], door_command)
 
-# Move Blade Runner to next block
-def move_to_next_station(ccp_id, next_block):
-    move_command = {"client_type": "mcp", "message": "EXEC", "action": "MOVE_TO_NEXT_BLOCK"}
-    send_udp_message(ccp_ports[ccp_id], move_command)
+# Handle SLOW command for BRs before stopping
+def handle_slow(br_id):
+    slow_command = {"client_type": "mcp", "message": "EXEC", "action": "SLOW"}
+    send_message(ccp_ports[br_id], slow_command)
+    print(f"SLOW command sent to {br_id}.")
 
-# Handle turns for Blade Runners
-def handle_turn(ccp_id, severity):
-    adjust_speed_command = {"client_type": "mcp", "message": "EXEC", "action": "SLOW", "turn_severity": severity}
-    send_udp_message(ccp_ports[ccp_id], adjust_speed_command)
+# Broadcast START command to all BRs to continue to the next station
+def broadcast_start():
+    start_command = {"client_type": "mcp", "message": "EXEC", "action": "START"}
+    for ccp_id, address in ccp_ports.items():
+        send_message(address, start_command)
+    print(f"START command broadcasted to all CCPs.")
 
 if __name__ == "__main__":
     start_mcp()

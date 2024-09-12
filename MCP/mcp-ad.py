@@ -1,5 +1,5 @@
 import socket
-from utils import create_udp_socket, receive_udp_message, send_udp_message, log_event
+from utils import create_socket, receive_message, send_message, log_event
 import time
 
 # Static port mapping for CCPs (Blade Runners)
@@ -41,12 +41,12 @@ track_map = {
 
 def start_mcp():
     print("Starting MCP...")
-    mcp_socket = create_udp_socket(2001)  # MCP listens on port 2001
+    mcp_socket = create_socket(2001)  # MCP listens on port 2001
     print("MCP listening on port 2001")
     
     while True:
         print("Waiting for messages...")
-        message, address = receive_udp_message(mcp_socket)
+        message, address = receive_message(mcp_socket)
         print(f"Message received from {address}")
         handle_message(address, message)
 
@@ -66,7 +66,7 @@ def handle_ccp_message(address, message):
     if message['message'] == 'CCIN':
         print(f"CCP {ccp_id} has connected.")
         ack_message = {"client_type": "mcp", "message": "ACK", "status": "INITIALIZED"}
-        send_udp_message(address, ack_message)
+        send_message(address, ack_message)
         return
 
     # Handle status updates with 'current_block'
@@ -87,7 +87,7 @@ def handle_ccp_message(address, message):
 def stop_at_station(ccp_id, station_id):
     # Send stop command to CCP (Blade Runner)
     stop_command = {"client_type": "mcp", "message": "EXEC", "action": "STOP"}
-    send_udp_message(ccp_ports[ccp_id], stop_command)
+    send_message(ccp_ports[ccp_id], stop_command)
     
     print(f"BR {ccp_id} stopping at station {station_id}")
     
@@ -107,17 +107,17 @@ def stop_at_station(ccp_id, station_id):
 def control_station_doors(station_id, action):
     # Send door control command to station
     door_command = {"client_type": "mcp", "message": "DOOR", "action": action}
-    send_udp_message(station_ports[station_id], door_command)
+    send_message(station_ports[station_id], door_command)
 
 def move_to_next_station(ccp_id, next_block):
     # Command to move the BR to the next block
     move_command = {"client_type": "mcp", "message": "EXEC", "action": "MOVE_TO_NEXT_BLOCK"}
-    send_udp_message(ccp_ports[ccp_id], move_command)
+    send_message(ccp_ports[ccp_id], move_command)
 
 def handle_turn(ccp_id, severity):
     # Handle a turn by adjusting speed
     adjust_speed_command = {"client_type": "mcp", "message": "EXEC", "action": "SLOW", "turn_severity": severity}
-    send_udp_message(ccp_ports[ccp_id], adjust_speed_command)
+    send_message(ccp_ports[ccp_id], adjust_speed_command)
 
 def handle_station_message(address, message):
     log_event("Station Message Received", message)
