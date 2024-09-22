@@ -83,6 +83,9 @@ def process_command(emergency_input):
             elif target.startswith("BR"):
                 # Send command to specific BR
                 send_command_to_br(target, action)
+            elif target.startswith("ST"):
+                # send command to specific station
+                send_command_to_station(target, action)
             else:
                 print("Invalid target. Use 'BR01' or 'ALL'.")
         else:
@@ -105,6 +108,14 @@ def send_command_to_br(br_id, action):
         print(f"Command '{action}' sent to {br_id}.")
     else:
         print(f"BR ID {br_id} not recognized.")
+        
+def send_command_to_station(target_id, action):
+    if target_id in station_ports:
+        command = {"client_type": "mcp", "message": "IRLD", "action": action.upper()}
+        send_message(station_ports[target_id], command)
+        print(f"Command '{action}' sent to {target_id}.")
+    else:
+        print(f"ST ID {target_id} not recognized.")
 
 # Handle incoming messages
 def handle_message(address, message):

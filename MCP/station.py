@@ -1,3 +1,4 @@
+import time
 from utils import create_socket, send_message, receive_message, log_event
 
 station_ports = {
@@ -35,6 +36,14 @@ def handle_mcp_command(station_id, message):
             time.sleep(3)  # Simulate opening time
         elif action == "CLOSE":
             time.sleep(3)  # Simulate closing time
+    if message['message'] == "IRLD": # Method to handle off and on LED commands from MCP
+        action = message['action']
+        log_event(f"Station {station_id} IRLD Action", action)
+        print(f"Station {station_id}: IRLD {action}")
+        if action == "ON":
+         print(f"LED Turned ON at {station_id}" )
+        elif action == "OFF":
+         print(f"LED Turned OFF at {station_id}" )
 
 if __name__ == "__main__":
     start_station('ST01')
