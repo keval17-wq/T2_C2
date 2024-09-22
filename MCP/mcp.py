@@ -28,16 +28,16 @@ station_ports = {
 
 # Track map for block management, handling turns and checkpoints
 track_map = {
-    'block_1': {'station': 'ST01', 'next_block': 'block_2', 'turn': False},
-    'block_2': {'station': 'ST02', 'next_block': 'block_3', 'turn': False, 'is_checkpoint': True},
-    'block_3': {'station': 'ST03', 'next_block': 'block_4', 'turn': True, 'turn_severity': 0.5},
-    'block_4': {'station': 'ST04', 'next_block': 'block_5', 'turn': False, 'is_checkpoint': True},
-    'block_5': {'station': 'ST05', 'next_block': 'block_6', 'turn': False},
-    'block_6': {'station': 'ST06', 'next_block': 'block_7', 'turn': True, 'turn_severity': 0.7, 'is_checkpoint': True},
-    'block_7': {'station': 'ST07', 'next_block': 'block_8', 'turn': False},
-    'block_8': {'station': 'ST08', 'next_block': 'block_9', 'turn': False, 'is_checkpoint': True},
-    'block_9': {'station': 'ST09', 'next_block': 'block_10', 'turn': False},
-    'block_10': {'station': 'ST10', 'next_block': 'block_1', 'turn': False}
+    'block_1': {'station': 'ST01', 'next_block': 'block_2', 'turn': False, 'led': 'LED01'},
+    'block_2': {'station': 'ST02', 'next_block': 'block_3', 'turn': False,'led': 'LED02', 'is_checkpoint': True},
+    'block_3': {'station': 'ST03', 'next_block': 'block_4', 'turn': True,'led': 'LED03', 'turn_severity': 0.5},
+    'block_4': {'station': 'ST04', 'next_block': 'block_5', 'turn': False, 'led': 'LED04','is_checkpoint': True},
+    'block_5': {'station': 'ST05', 'next_block': 'block_6', 'turn': False, 'led': 'LED05'},
+    'block_6': {'station': 'ST06', 'next_block': 'block_7', 'turn': True, 'led': 'LED06', 'turn_severity': 0.7, 'is_checkpoint': True},
+    'block_7': {'station': 'ST07', 'next_block': 'block_8', 'turn': False, 'led': 'LED07'},
+    'block_8': {'station': 'ST08', 'next_block': 'block_9', 'turn': False, 'led': 'LED08', 'is_checkpoint': True},
+    'block_9': {'station': 'ST09', 'next_block': 'block_10', 'turn': False, 'led': 'LED09'},
+    'block_10': {'station': 'ST10', 'next_block': 'block_1', 'turn': False, 'led': 'LED10'}
 }
 
 # Track occupancy to map which block is occupied by which BR
