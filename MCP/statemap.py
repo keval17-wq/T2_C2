@@ -15,7 +15,7 @@ class brMap:
         'block_8': {'station': 'ST08', 'next_block': 'block_9', 'turn': False, 'led': 'LED08', 'is_checkpoint': True, 'isOccupied': False, 'occupiedBy': None},
         'block_9': {'station': 'ST09', 'next_block': 'block_10', 'turn': False, 'led': 'LED09', 'isOccupied': False, 'occupiedBy': None},
         'block_10': {'station': 'ST10', 'next_block': 'block_1', 'turn': False, 'led': 'LED10', 'isOccupied': False, 'occupiedBy': None}
-    }
+     }
 
     # Class variable to hold ports
     ccp_ports = {
@@ -24,7 +24,13 @@ class brMap:
         'BR03': ('127.0.0.1', 2004),
         'BR04': ('127.0.0.1', 2005),
         'BR05': ('127.0.0.1', 2006)
-    }
+     }
+
+    def __init__(self, tr, ccp):
+        self.track_map = tr
+        self.ccp_ports = ccp
+    def __init__(self):
+       return
 
     # Takes item in track_map (block_XX), returns next block
     @classmethod
@@ -47,16 +53,24 @@ class brMap:
     
     # Takes block name and BR, updates the occupancy and returns true if success, false otherwise
     @classmethod
+   
     def updateOccupancy(cls, block, br):
-        try:
-            if block in cls.track_map and br in cls.ccp_ports:
-                cls.track_map[block]['isOccupied'] = True
-                cls.track_map[block]['occupiedBy'] = br
-                return True
-        except:
-            print(f"{block} or {br} are not valid inputs")
-            return False
-    
+     try:
+        # Check if the block exists in track_map
+      if block in cls.track_map:
+        
+
+        # Update the occupancy status and who occupies it
+        cls.track_map[block]['isOccupied'] = True
+        cls.track_map[block]['occupiedBy'] = br
+        return True
+
+     
+     except Exception as e:
+        # General catch-all for any other unforeseen exceptions
+        print(f"Unexpected error: {e}")
+        return False
+
     # Helper method to get block that is being occupied by BR currently
     @classmethod
     def getBladeRunnerOccupancy(cls, br):
@@ -65,6 +79,47 @@ class brMap:
                 if data.get('occupiedBy') == br:
                     return block
         return None
+    
+   
+    
+    @classmethod
+    def isNextBlockFull(cls, block):
+     try:
+       r = cls.track_map[block]['next_block']
+       if cls.track_map[r]['isOccupied'] == True:
+          return True
+       else: return False
+     except:
+      print('next block full failed to execute')
+     
+    
+if __name__ == "__main__":
+ s = brMap()
+ print(s.updateOccupancy('block_1', 'BR01'))
+ #print(s.track_map['block_1'])
+ m = s.getNextBlock('block_10')
+ print(m)
+r = s.isNextBlockFull('block_10')
+print(r)
+print(s.getBladeRunnerOccupancy("BR01"))
+
+
+
+
+
+                    
+        
+        
+
+        
+        
+
+                
+      
+    
+    
+
+    
     
     
     
