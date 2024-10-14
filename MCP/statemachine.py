@@ -125,5 +125,10 @@ def broadcast_start(self):
         send_message(address, start_command)
     print(f"START command broadcasted to all CCPs.")
 
-### one function that defers to each scenario
+
   
+
+
+#one state machine per ?
+#one per thread per BR
+#should handle init first, 
