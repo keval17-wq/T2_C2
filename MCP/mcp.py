@@ -26,7 +26,7 @@ station_ports = {
     'ST10': ('127.0.0.1', 4010)
 }
 
-# Track map for block management, handling turns and checkpoints
+# Track map for block management, handling turns and checkpoints + Handle Random Block Order 
 track_map = {
     'block_1': {'station': 'ST01', 'next_block': 'block_2', 'turn': False},
     'block_2': {'station': 'ST02', 'next_block': 'block_3', 'turn': False, 'is_checkpoint': True},
@@ -169,6 +169,7 @@ def stop_br_at_station(br_id, station_id):
         control_station_doors(station_id, "CLOSE")
     
     # Broadcast START again to all BRs after each station stop
+    
     broadcast_start()
 
 # Control station doors
