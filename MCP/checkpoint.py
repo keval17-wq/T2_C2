@@ -34,7 +34,7 @@ def send_trip_message(checkpoint_id, port):
         "client_type": "checkpoint",
         "client_id": checkpoint_id,
         "message": "TRIP",
-        "block_id": checkpoint_id
+
     }
     send_message(mcp_address, message)
     log_event(f"TRIP at {checkpoint_id}", message)

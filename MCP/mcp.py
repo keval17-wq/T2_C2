@@ -5,7 +5,7 @@ import time
 
 # Static port mapping for CCPs (Blade Runners)
 ccp_ports = {
-    'BR01': ('127.0.0.1', 2002),
+    'BR01': ('10.126.195.126', 2002),
     'BR02': ('127.0.0.1', 2003),
     'BR03': ('127.0.0.1', 2004),
     'BR04': ('127.0.0.1', 2005),
@@ -26,18 +26,32 @@ station_ports = {
     'ST10': ('127.0.0.1', 4010)
 }
 
-# Track map for block management, handling turns and checkpoints + Handle Random Block Order 
+# Static port mapping for checkpoints
+checkpoint_ports = {
+    'CP01': ('127.0.0.1', 5001),
+    'CP02': ('127.0.0.1', 5002),
+    'CP03': ('127.0.0.1', 5003),
+    'CP04': ('127.0.0.1', 5004),
+    'CP05': ('127.0.0.1', 5005),
+    'CP06': ('127.0.0.1', 5006),
+    'CP07': ('127.0.0.1', 5007),
+    'CP08': ('127.0.0.1', 5008),
+    'CP09': ('127.0.0.1', 5009),
+    'CP10': ('127.0.0.1', 5010)
+}
+
+# Track map for block management, handling turns and checkpoints
 track_map = {
-    'block_1': {'station': 'ST01', 'next_block': 'block_2', 'turn': False},
+    'block_1': {'station': 'ST01', 'next_block': 'block_2', 'turn': False, 'is_checkpoint': True},
     'block_2': {'station': 'ST02', 'next_block': 'block_3', 'turn': False, 'is_checkpoint': True},
-    'block_3': {'station': 'ST03', 'next_block': 'block_4', 'turn': True, 'turn_severity': 0.5},
+    'block_3': {'station': 'ST03', 'next_block': 'block_4', 'turn': True, 'turn_severity': 0.5, 'is_checkpoint': True},
     'block_4': {'station': 'ST04', 'next_block': 'block_5', 'turn': False, 'is_checkpoint': True},
-    'block_5': {'station': 'ST05', 'next_block': 'block_6', 'turn': False},
+    'block_5': {'station': 'ST05', 'next_block': 'block_6', 'turn': False, 'is_checkpoint': True},
     'block_6': {'station': 'ST06', 'next_block': 'block_7', 'turn': True, 'turn_severity': 0.7, 'is_checkpoint': True},
-    'block_7': {'station': 'ST07', 'next_block': 'block_8', 'turn': False},
+    'block_7': {'station': 'ST07', 'next_block': 'block_8', 'turn': False, 'is_checkpoint': True},
     'block_8': {'station': 'ST08', 'next_block': 'block_9', 'turn': False, 'is_checkpoint': True},
-    'block_9': {'station': 'ST09', 'next_block': 'block_10', 'turn': False},
-    'block_10': {'station': 'ST10', 'next_block': 'block_1', 'turn': False}
+    'block_9': {'station': 'ST09', 'next_block': 'block_10', 'turn': False, 'is_checkpoint': True},
+    'block_10': {'station': 'ST10', 'next_block': 'block_1', 'turn': False, 'is_checkpoint': True}
 }
 
 # Track occupancy to map which block is occupied by which BR
@@ -46,8 +60,8 @@ track_occupancy = {}
 # Start MCP server and emergency handler thread
 def start_mcp():
     print("Starting MCP...")
-    mcp_socket = create_socket(2001)  # MCP listens on port 2001
-    print("MCP listening on port 2001")
+    mcp_socket = create_socket(2000)  # MCP listens on port 2000
+    print("MCP listening on port 2000")
 
     # Start the emergency command thread
     emergency = threading.Thread(target=emergency_command_handler)
@@ -109,13 +123,10 @@ def send_command_to_br(br_id, action):
 # Handle incoming messages
 def handle_message(address, message):
     if message['client_type'] == 'ccp':
-        print(f"Handling CCP message from {address}")
         handle_ccp_message(address, message)
     elif message['client_type'] == 'station':
-        print(f"Handling Station message from {address}")
         handle_station_message(address, message)
     elif message['client_type'] == 'checkpoint':
-        print(f"Handling Checkpoint message from {address}")
         handle_checkpoint_message(address, message)
 
 # Handle CCP messages
@@ -126,10 +137,10 @@ def handle_ccp_message(address, message):
     if message['message'] == 'CCIN':
         # Handle initialization: Send ACK first
         print(f"CCP {ccp_id} initialized.")
-        ack_command = {"client_type": "mcp", "message": "ACK", "status": "RECEIVED"}
+        ack_command = {"client_type": "mcp", "message": "AKIN", "status": "RECEIVED"}
         send_message(ccp_ports[ccp_id], ack_command)  # Acknowledge initialization
     
-    # No need for CCP to send block info as MCP will determine that from checkpoints.
+    # Handle other status or commands if needed
 
 # Handle Station messages
 def handle_station_message(address, message):
@@ -150,15 +161,16 @@ def handle_checkpoint_message(address, message):
         # Determine which BR is in this block
         if tripped_block in track_occupancy:
             br_id = track_occupancy[tripped_block]
-            # Send SLOW command to BR before full stop
             handle_slow(br_id)
+            notify_station_and_checkpoint(br_id, track_map[tripped_block]['station'])
             stop_br_at_station(br_id, track_map[tripped_block]['station'])
 
-# Handle BR stops at stations
+# Handle BR stops at stations and notify checkpoint/station of arrival
 def stop_br_at_station(br_id, station_id):
     stop_command = {"client_type": "mcp", "message": "EXEC", "action": "STOP"}
     send_message(ccp_ports[br_id], stop_command)
-    
+
+    # Handle stopping at checkpoint or station
     if track_map.get(station_id, {}).get('is_checkpoint'):
         print(f"BR {br_id} stopping briefly at checkpoint {station_id}")
         time.sleep(3)  # Brief stop
@@ -168,9 +180,31 @@ def stop_br_at_station(br_id, station_id):
         time.sleep(10)  # Wait time
         control_station_doors(station_id, "CLOSE")
     
-    # Broadcast START again to all BRs after each station stop
-    
     broadcast_start()
+
+# Notify both checkpoint and station about BR's arrival
+def notify_station_and_checkpoint(br_id, station_id):
+    checkpoint_id = track_map[station_id].get('checkpoint_id')
+
+    if checkpoint_id:
+        notify_checkpoint_arrival(br_id, checkpoint_id)
+
+    notify_station_arrival(br_id, station_id)
+
+# Notify the checkpoint that BR is arriving
+def notify_checkpoint_arrival(br_id, checkpoint_id):
+    arrival_message = {"client_type": "mcp", "message": "BRARRIVE", "client_id": checkpoint_id, "br_id": br_id}
+    send_message(checkpoint_ports[checkpoint_id], arrival_message)
+    # Turn on LED at checkpoint
+    led_command = {"client_type": "mcp", "message": "EXEC", "client_id": checkpoint_id, "action": "ON"}
+    send_message(checkpoint_ports[checkpoint_id], led_command)
+    print(f"Notified checkpoint {checkpoint_id} about BR {br_id} arrival.")
+
+# Notify the station that BR is arriving
+def notify_station_arrival(br_id, station_id):
+    arrival_message = {"client_type": "mcp", "message": "STNARRIVE", "client_id": station_id, "br_id": br_id}
+    send_message(station_ports[station_id], arrival_message)
+    print(f"Notified station {station_id} about BR {br_id} arrival.")
 
 # Control station doors
 def control_station_doors(station_id, action):
