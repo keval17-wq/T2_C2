@@ -41,6 +41,7 @@ checkpoint_ports = {
 }
 
 # Track map for block management, handling turns and checkpoints
+# Send the information to Station on notifying when START upon stopping after the trip thing. 
 track_map = {
     'block_1': {'station': 'ST01', 'next_block': 'block_2', 'turn': False, 'is_checkpoint': True},
     'block_2': {'station': 'ST02', 'next_block': 'block_3', 'turn': False, 'is_checkpoint': True},
