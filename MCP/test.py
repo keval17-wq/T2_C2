@@ -105,14 +105,14 @@ def start_component(port, expected_message, component_type):
 
 # Send test command to MCP
 def send_test_command(port, command):
-    mcp_socket = create_socket()
+    #mcp_socket = create_socket(port)
     client_id = command['client_id']
     
     # Set the correct sequence number before sending the command
     command['sequence_number'] = update_sequence_number(client_id)
     send_message((LOCAL_HOST, mcp_port), command)
     print(f"Sent test command to MCP: {command}")
-    mcp_socket.close()
+   # mcp_socket.close()
 
 # Test case function to validate communication for each type
 def run_test_case(component_type, ports, ack_message):
@@ -122,7 +122,7 @@ def run_test_case(component_type, ports, ack_message):
         start_component(port, ack, component_type)
 
 # Start listening for CCP, STC, and CPC on their respective ports
-def start_test():
+def start__acknowledgement_test():
     # Run tests for CCP (Blade Runners)
     run_test_case("CCP", ccp_ports, {"client_type": "CCP", "message": "AKEX", "sequence_number": 0})
 
@@ -133,23 +133,86 @@ def start_test():
     run_test_case("CPC", checkpoint_ports, {"client_type": "CPC", "message": "AKEX", "sequence_number": 0})
 
     # Simulate sending test commands to MCP from different clients
-    test_commands = [
-        {"client_type": "CCP", "message": "CCIN", "client_id": "BR01"},
-        {"client_type": "STC", "message": "DOOR", "client_id": "ST01", "action": "OPEN"},
-        {"client_type": "CPC", "message": "TRIP", "client_id": "CP01", "status": "ON"}
+   
+    test_acknowledge_commands = [ #list of commands to test that they are recognised and  an acknowledgment is sent back from MCP, simply
+    # CCP messages
+    {"client_type": "CCP", "message": "CCIN", "client_id": "BR01", "sequence_number": "1000"}, # Init message with CCP clients
+    {"client_type": "CCP", "message": "CCIN", "client_id": "BR02", "sequence_number": "1000"},
+    {"client_type": "CCP", "message": "CCIN", "client_id": "BR03", "sequence_number": "1000"},
+    
+    # STAT messages from BR01
+    {"client_type": "CCP", "message": "STAT", "client_id": "BR01", "status": "ERR", "sequence_number": "1001"}, # error status value from CCP
+    {"client_type": "CCP", "message": "STAT", "client_id": "BR01", "status": "STOPC", "sequence_number": "1002"}, # BR stopped unexpectedly
+    {"client_type": "CCP", "message": "STAT", "client_id": "BR01", "status": "STOPO", "sequence_number": "1003"}, # BR stopped unexpectedly with door open
+    {"client_type": "CCP", "message": "STAT", "client_id": "BR01", "status": "FSLOWC", "sequence_number": "1004"},
+    {"client_type": "CCP", "message": "STAT", "client_id": "BR01", "status": "FFASTC", "sequence_number": "1005"},
+    {"client_type": "CCP", "message": "STAT", "client_id": "BR01", "status": "RSLOWC", "sequence_number": "1006"},
+    {"client_type": "CCP", "message": "STAT", "client_id": "BR01", "status": "OFLN", "sequence_number": "1007"},
+    
+    {"client_type": "STC", "message": "STIN", "client_id": "ST01", "sequence_number": "2000"}, # Initialization with ST01
+    
+    # TRIP Messages from STC01
+    {"client_type": "STC", "message": "TRIP", "client_id": "ST01", "sequence_number": "2001", "status": "ON"},
+    {"client_type": "STC", "message": "TRIP", "client_id": "ST01", "sequence_number": "2002", "status": "OFF"},
+    {"client_type": "STC", "message": "TRIP", "client_id": "ST01", "sequence_number": "2003", "status": "ERR"},
+    
+    # Checkpoint initialization
+    {"client_type": "CPC", "message": "CPIN", "client_id": "CP01", "sequence_number": "3000"},
+    
+    # Checkpoint status messages
+    {"client_type": "CPC", "message": "TRIP", "client_id": "CP01", "sequence_number": "3001", "status": "ON"},
+    {"client_type": "CPC", "message": "TRIP", "client_id": "CP01", "sequence_number": "3002", "status": "OFF"},
+    {"client_type": "CPC", "message": "TRIP", "client_id": "CP01", "sequence_number": "3003", "status": "ERR"},
+] 
+    test_station_stopping_commands = [ #these are the commands in the station stopping protocol from the clients, in order
+    {"client_type": "CCP", "message": "CCIN", "client_id": "BR01", "sequence_number": "1000"},
+    {"client_type": "STC", "message": "STIN", "client_id": "ST01", "sequence_number": "2000"},
+    
+    {"client_type": "STC", "message": "TRIP", "client_id": "ST01", "sequence_number": "2001", "status": "ON"},
+    {"client_type": "CCP", "message": "AKEX", "client_id": "BR01", "sequence_number": "1001"},
+    {"client_type": "STC", "message": "AKEX", "client_id": "ST01", "sequence_number": "2002"},
+    {"client_type": "CCP", "message": "STAT", "client_id": "BR01", "sequence_number": "1002", "status": "STOPC"},
+    {"client_type": "CCP", "message": "AKEX", "client_id": "BR01", "sequence_number": "1003"},
+    {"client_type": "CCP", "message": "STAT", "client_id": "BR01", "sequence_number": "1004", "status": "STOPO"},
+    {"client_type": "STC", "message": "STAT", "client_id": "ST01", "sequence_number": "2003", "status": "ONOPEN"},
+    {"client_type": "CCP", "message": "AKEX", "client_id": "BR01", "sequence_number": "1005"},
+    {"client_type": "STC", "message": "STAT", "client_id": "ST01", "sequence_number": "2004", "status": "ON"},
+    {"client_type": "CCP", "message": "STAT", "client_id": "BR01", "sequence_number": "1006", "status": "STOPC"},
+    {"client_type": "STC", "message": "AKEX", "client_id": "ST01", "sequence_number": "2005"},
+    {"client_type": "CCP", "message": "AKEX", "client_id": "BR01", "sequence_number": "1007"},
+    {"client_type": "CCP", "message": "STAT", "client_id": "BR01", "sequence_number": "1008", "status": "FFASTC"},
+    {"client_type": "STC", "message": "TRIP", "client_id": "ST01", "sequence_number": "2006", "status": "OFF"},
+]
+    
+    test_startup_commands = [
+    {"client_type": "CCP", "message": "CCIN", "client_id": "BR01", "sequence_number": "1000"},
+    {"client_type": "CCP", "message": "CCIN", "client_id": "BR02", "sequence_number": "1000"},
+    {"client_type": "STC", "message": "STIN", "client_id": "ST01", "sequence_number": "2000"},
+     {"client_type": "CPC", "message": "CPIN", "client_id": "CP01", "sequence_number": "3000"},
+     
+     {"client_type": "CCP", "message": "AKEX", "client_id": "BR01", "sequence_number": "1001"},
+     {"client_type": "STC", "message": "TRIP", "client_id": "ST01", "sequence_number": "2001"},
+     {"client_type": "CCP", "message": "STAT", "client_id": "BR01", "sequence_number": "1002", "status": "STOPC"},
+     {"client_type": "CCP", "message": "AKEX", "client_id": "BR02", "sequence_number": "1001"},
+     {"client_type": "CPC", "message": "TRIP", "client_id": "CP01", "sequence_number": "3001", "status": "ON"},
+     {"client_type": "CCP", "message": "STAT", "client_id": "BR02", "sequence_number": "1002", "status": "STOPC"},
+   
     ]
 
+   
+
     # Send commands to MCP to simulate test cases
-    for command in test_commands:
+    for command in test_acknowledge_commands: # use the other data structure ' test_station_stopping_commands' to test station stop protocol
         if command["client_type"] == "CCP":
             send_test_command(ccp_ports[command["client_id"]][1], command)
         elif command["client_type"] == "STC":
             send_test_command(station_ports[command["client_id"]][1], command)
         elif command["client_type"] == "CPC":
             send_test_command(checkpoint_ports[command["client_id"]][1], command)
+        time.sleep(1)  # Allow time for processing
 
-    time.sleep(5)  # Allow time for processing
+    
     print("Test run completed")
 
 if __name__ == "__main__":
-    start_test()
+    start__acknowledgement_test()
