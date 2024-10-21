@@ -1,3 +1,4 @@
+# Checkpoint exists 
 import socket
 import threading
 import random
@@ -13,20 +14,47 @@ ccp_ports = {
     'BR05': ('127.0.0.1', 3005)
 }
 
-# Static port mapping for stations
+# Static port mapping for Stations
 station_ports = {
     'ST01': ('127.0.0.1', 4001),
-    # Add other stations as needed
+    'ST02': ('127.0.0.1', 4002),
+    'ST03': ('127.0.0.1', 4003),
+    'ST04': ('127.0.0.1', 4004),
+    'ST05': ('127.0.0.1', 4005),
+    'ST06': ('127.0.0.1', 4006),
+    'ST07': ('127.0.0.1', 4007),
+    'ST08': ('127.0.0.1', 4008),
+    'ST09': ('127.0.0.1', 4009),
+    'ST10': ('127.0.0.1', 4010)
 }
 
-# Static port mapping for checkpoints
+# Static port mapping for Checkpoints
 checkpoint_ports = {
     'CP01': ('127.0.0.1', 5001),
-    # Add other checkpoints as needed
+    'CP02': ('127.0.0.1', 5002),
+    'CP03': ('127.0.0.1', 5003),
+    'CP04': ('127.0.0.1', 5004),
+    'CP05': ('127.0.0.1', 5005),
+    'CP06': ('127.0.0.1', 5006),
+    'CP07': ('127.0.0.1', 5007),
+    'CP08': ('127.0.0.1', 5008),
+    'CP09': ('127.0.0.1', 5009),
+    'CP10': ('127.0.0.1', 5010)
 }
 
-# Track occupancy to map which block is occupied by which BR
-track_occupancy = {}
+# Track map for block management, handling turns and checkpoints
+track_map = {
+    'block_1': {'checkpoint': 'CP01', 'station': 'ST01', 'next_block': 'block_2', 'turn': False},
+    'block_2': {'checkpoint': 'CP02', 'station': 'ST02', 'next_block': 'block_3', 'turn': False},
+    'block_3': {'checkpoint': 'CP03', 'station': 'ST03', 'next_block': 'block_4', 'turn': True, 'turn_severity': 0.5},
+    'block_4': {'checkpoint': 'CP04', 'station': 'ST04', 'next_block': 'block_5', 'turn': False},
+    'block_5': {'checkpoint': 'CP05', 'station': 'ST05', 'next_block': 'block_6', 'turn': False},
+    'block_6': {'checkpoint': 'CP06', 'station': 'ST06', 'next_block': 'block_7', 'turn': True, 'turn_severity': 0.7},
+    'block_7': {'checkpoint': 'CP07', 'station': 'ST07', 'next_block': 'block_8', 'turn': False},
+    'block_8': {'checkpoint': 'CP08', 'station': 'ST08', 'next_block': 'block_9', 'turn': False},
+    'block_9': {'checkpoint': 'CP09', 'station': 'ST09', 'next_block': 'block_10', 'turn': False},
+    'block_10': {'checkpoint': 'CP10', 'station': 'ST10', 'next_block': 'block_1', 'turn': False}
+}
 
 # Sequence numbers per client and per direction
 sequence_numbers = {
@@ -40,6 +68,13 @@ def increment_sequence_number(sender, receiver):
     else:
         sequence_numbers[key] += 1
     return sequence_numbers[key]
+
+# State variables
+connected_brs = set()
+connected_stations = set()
+connected_checkpoints = set()
+startup_completed = False
+br_locations = {}  # Key: br_id, Value: block_id
 
 # Start MCP server and emergency handler thread
 def start_mcp():
@@ -55,7 +90,6 @@ def start_mcp():
     while True:
         print("Waiting for messages...")
         message, address = receive_message(mcp_socket)
-        print(f"Message received from {address}")
         handle_message(address, message)
 
 # Handle emergency commands (running in parallel)
@@ -121,13 +155,13 @@ def send_command_to_br(br_id, action):
 # Handle incoming messages
 def handle_message(address, message):
     client_type = message['client_type']
-    if client_type == 'CCP' or 'ccp':
+    if client_type == 'CCP':
         print(f"Handling CCP message from {address}")
         handle_ccp_message(address, message)
-    elif client_type == 'STC' or 'stc':
+    elif client_type == 'STC':
         print(f"Handling Station message from {address}")
         handle_station_message(address, message)
-    elif client_type == 'CPC' or 'cpc': # Check if Checkpoint system is still in play or not? 
+    elif client_type == 'CPC':
         print(f"Handling Checkpoint message from {address}")
         handle_checkpoint_message(address, message)
     else:
@@ -152,6 +186,10 @@ def handle_ccp_message(address, message):
             "sequence_number": s_mcp
         }
         send_message(ccp_ports[ccp_id], ack_command)  # Acknowledge initialization
+        if ccp_id not in connected_brs:
+            connected_brs.add(ccp_id)
+            print(f"Added {ccp_id} to connected BRs.")
+            check_startup_completion()
     elif message['message'] == 'STAT':
         print(f"BR {ccp_id} STAT received.")
         ack_command = {
@@ -195,8 +233,12 @@ def handle_station_message(address, message):
             "sequence_number": s_mcp
         }
         send_message(station_ports[station_id], ack_command)
+        if station_id not in connected_stations:
+            connected_stations.add(station_id)
+            print(f"Added {station_id} to connected Stations.")
+            check_startup_completion()
     elif message['message'] == 'TRIP':
-        # Handle TRIP messages
+        # Handle TRIP messages (if any)
         print(f"TRIP message received from Station {station_id}")
         ack_command = {
             "client_type": "STC",
@@ -205,7 +247,6 @@ def handle_station_message(address, message):
             "sequence_number": s_mcp
         }
         send_message(station_ports[station_id], ack_command)
-        # Process TRIP message
     elif message['message'] == 'STAT':
         print(f"Station {station_id} STAT received.")
         ack_command = {
@@ -255,6 +296,10 @@ def handle_checkpoint_message(address, message):
             "sequence_number": s_mcp
         }
         send_message(checkpoint_ports[checkpoint_id], ack_command)
+        if checkpoint_id not in connected_checkpoints:
+            connected_checkpoints.add(checkpoint_id)
+            print(f"Added {checkpoint_id} to connected Checkpoints.")
+            check_startup_completion()
     elif message['message'] == 'TRIP':
         print(f"TRIP signal received from {checkpoint_id}")
         ack_command = {
@@ -264,6 +309,15 @@ def handle_checkpoint_message(address, message):
             "sequence_number": s_mcp
         }
         send_message(checkpoint_ports[checkpoint_id], ack_command)
+        # Update BR location
+        br_id = message.get('br_id')
+        if br_id:
+            block_id = get_block_by_checkpoint(checkpoint_id)
+            if block_id:
+                br_locations[br_id] = block_id
+                print(f"BR {br_id} is at {checkpoint_id} (Block: {block_id})")
+                print_current_positions()
+                check_all_brs_positioned()
     elif message['message'] == 'STAT':
         print(f"Checkpoint {checkpoint_id} STAT received.")
         ack_command = {
@@ -273,6 +327,16 @@ def handle_checkpoint_message(address, message):
             "sequence_number": s_mcp
         }
         send_message(checkpoint_ports[checkpoint_id], ack_command)
+        if message['status'] == 'ERR':
+            error_command = {
+                "client_type": "CPC",
+                "message": "EXEC",
+                "client_id": checkpoint_id,
+                "sequence_number": s_mcp,
+                "action": "BLINK",
+                "br_id": ""
+            }
+            send_message(checkpoint_ports[checkpoint_id], error_command)
     elif message['message'] == 'AKEX':
         print(f"Checkpoint {checkpoint_id} acknowledged command.")
     else:
@@ -284,6 +348,68 @@ def handle_checkpoint_message(address, message):
             "sequence_number": s_mcp
         }
         send_message(checkpoint_ports[checkpoint_id], noip_message)
+
+# Get block_id by checkpoint_id
+def get_block_by_checkpoint(checkpoint_id):
+    for block_id, block_info in track_map.items():
+        if block_info['checkpoint'] == checkpoint_id:
+            return block_id
+    return None
+
+# Check if startup protocol can be initiated
+def check_startup_completion():
+    global startup_completed
+    if not startup_completed and connected_brs and connected_stations and connected_checkpoints:
+        print("All BRs, Stations, and Checkpoints are connected. Starting startup protocol...")
+        startup_completed = True
+        start_startup_protocol()
+
+# Start the startup protocol
+def start_startup_protocol():
+    for br_id in connected_brs:
+        send_command_to_br(br_id, "FSLOWC")
+        print(f"Sent FSLOWC command to {br_id} to find initial position.")
+
+# Check if all BRs have been positioned
+def check_all_brs_positioned():
+    if len(br_locations) == len(connected_brs):
+        print("All BRs have been positioned. Starting normal operations.")
+        start_normal_operations()
+
+# Start normal operations
+def start_normal_operations():
+    # Send initial commands to BRs to start moving
+    broadcast_start()
+
+# Broadcast START command to all BRs to continue to the next checkpoint
+def broadcast_start():
+    for br_id in connected_brs:
+        s_mcp = increment_sequence_number('MCP', br_id)
+        action = determine_action_for_br(br_id)
+        start_command = {
+            "client_type": "CCP",
+            "message": "EXEC",
+            "client_id": br_id,
+            "sequence_number": s_mcp,
+            "action": action  # Action based on track conditions
+        }
+        send_message(ccp_ports[br_id], start_command)
+        print(f"Sent '{action}' command to {br_id}")
+    print(f"START command broadcasted to all CCPs.")
+
+# Determine action for BR based on track map (e.g., handle turns)
+def determine_action_for_br(br_id):
+    block_id = br_locations.get(br_id)
+    if block_id:
+        block_info = track_map[block_id]
+        if block_info.get('turn'):
+            severity = block_info.get('turn_severity', 0)
+            # Decide to send slow command
+            return "FSLOWC"
+        else:
+            return "FFASTC"
+    else:
+        return "FFASTC"  # Default action
 
 # Control station doors
 def control_station_doors(station_id, action):
@@ -297,20 +423,14 @@ def control_station_doors(station_id, action):
     }
     send_message(station_ports[station_id], door_command)
 
-# Broadcast START command to all BRs to continue to the next station
-def broadcast_start():
-    for ccp_id, address in ccp_ports.items():
-        s_mcp = increment_sequence_number('MCP', ccp_id)
-        start_command = {
-            "client_type": "CCP",
-            "message": "EXEC",
-            "client_id": ccp_id,
-            "sequence_number": s_mcp,
-            "action": "FFASTC"  # BR moves forward fast, door is closed
-        }
-        send_message(address, start_command)
-    print(f"START command broadcasted to all CCPs.")
+# Print current positions of BRs
+def print_current_positions():
+    print("Current Positions of Blade Runners:")
+    for br_id, block_id in br_locations.items():
+        block_info = track_map[block_id]
+        checkpoint_id = block_info['checkpoint']
+        station_id = block_info['station']
+        print(f"BR {br_id} is at Block {block_id}, Checkpoint {checkpoint_id}, Station {station_id}")
 
 if __name__ == "__main__":
     start_mcp()
-
