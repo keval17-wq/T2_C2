@@ -1,4 +1,3 @@
-# Checkpoint exists 
 import socket
 import threading
 import random
@@ -42,18 +41,11 @@ checkpoint_ports = {
     'CP10': ('127.0.0.1', 5010)
 }
 
-# Track map for block management, handling turns and checkpoints
+# Track map for block management
 track_map = {
     'block_1': {'checkpoint': 'CP01', 'station': 'ST01', 'next_block': 'block_2', 'turn': False},
     'block_2': {'checkpoint': 'CP02', 'station': 'ST02', 'next_block': 'block_3', 'turn': False},
-    'block_3': {'checkpoint': 'CP03', 'station': 'ST03', 'next_block': 'block_4', 'turn': True, 'turn_severity': 0.5},
-    'block_4': {'checkpoint': 'CP04', 'station': 'ST04', 'next_block': 'block_5', 'turn': False},
-    'block_5': {'checkpoint': 'CP05', 'station': 'ST05', 'next_block': 'block_6', 'turn': False},
-    'block_6': {'checkpoint': 'CP06', 'station': 'ST06', 'next_block': 'block_7', 'turn': True, 'turn_severity': 0.7},
-    'block_7': {'checkpoint': 'CP07', 'station': 'ST07', 'next_block': 'block_8', 'turn': False},
-    'block_8': {'checkpoint': 'CP08', 'station': 'ST08', 'next_block': 'block_9', 'turn': False},
-    'block_9': {'checkpoint': 'CP09', 'station': 'ST09', 'next_block': 'block_10', 'turn': False},
-    'block_10': {'checkpoint': 'CP10', 'station': 'ST10', 'next_block': 'block_1', 'turn': False}
+    # Add more blocks as needed
 }
 
 # Sequence numbers per client and per direction
@@ -75,6 +67,8 @@ connected_stations = set()
 connected_checkpoints = set()
 startup_completed = False
 br_locations = {}  # Key: br_id, Value: block_id
+startup_queue = []  # Queue of BRs to process in startup protocol
+current_startup_br = None  # BR currently being processed in startup
 
 # Start MCP server and emergency handler thread
 def start_mcp():
@@ -141,7 +135,7 @@ def send_command_to_br(br_id, action):
     if br_id in ccp_ports:
         s_mcp = increment_sequence_number('MCP', br_id)
         command = {
-            "client_type": "CCP",  # Set to recipient's client_type
+            "client_type": "CCP",  # Recipient's client_type
             "message": "EXEC",
             "client_id": br_id,
             "sequence_number": s_mcp,
@@ -188,6 +182,7 @@ def handle_ccp_message(address, message):
         send_message(ccp_ports[ccp_id], ack_command)  # Acknowledge initialization
         if ccp_id not in connected_brs:
             connected_brs.add(ccp_id)
+            startup_queue.append(ccp_id)
             print(f"Added {ccp_id} to connected BRs.")
             check_startup_completion()
     elif message['message'] == 'STAT':
@@ -309,15 +304,16 @@ def handle_checkpoint_message(address, message):
             "sequence_number": s_mcp
         }
         send_message(checkpoint_ports[checkpoint_id], ack_command)
-        # Update BR location
-        br_id = message.get('br_id')
-        if br_id:
+        # Associate the TRIP with the current BR in the startup process
+        if current_startup_br:
             block_id = get_block_by_checkpoint(checkpoint_id)
             if block_id:
-                br_locations[br_id] = block_id
-                print(f"BR {br_id} is at {checkpoint_id} (Block: {block_id})")
+                br_locations[current_startup_br] = block_id
+                print(f"BR {current_startup_br} is at {checkpoint_id} (Block: {block_id})")
                 print_current_positions()
-                check_all_brs_positioned()
+                current_startup_br = None  # Reset current BR
+                # Proceed to the next BR in the startup queue
+                process_next_startup_br()
     elif message['message'] == 'STAT':
         print(f"Checkpoint {checkpoint_id} STAT received.")
         ack_command = {
@@ -362,17 +358,18 @@ def check_startup_completion():
     if not startup_completed and connected_brs and connected_stations and connected_checkpoints:
         print("All BRs, Stations, and Checkpoints are connected. Starting startup protocol...")
         startup_completed = True
-        start_startup_protocol()
+        # Start the startup protocol with the first BR
+        process_next_startup_br()
 
-# Start the startup protocol
-def start_startup_protocol():
-    for br_id in connected_brs:
-        send_command_to_br(br_id, "FSLOWC")
-        print(f"Sent FSLOWC command to {br_id} to find initial position.")
-
-# Check if all BRs have been positioned
-def check_all_brs_positioned():
-    if len(br_locations) == len(connected_brs):
+# Process the next BR in the startup queue
+def process_next_startup_br():
+    global current_startup_br
+    if startup_queue:
+        current_startup_br = startup_queue.pop(0)
+        send_command_to_br(current_startup_br, "FSLOWC")
+        print(f"Sent FSLOWC command to {current_startup_br} to find initial position.")
+    else:
+        # All BRs have been processed
         print("All BRs have been positioned. Starting normal operations.")
         start_normal_operations()
 
