@@ -65,10 +65,11 @@ def increment_sequence_number(sender, receiver):
 connected_brs = set()
 connected_stations = set()
 connected_checkpoints = set()
-startup_completed = False
 br_locations = {}  # Key: br_id, Value: block_id
 startup_queue = []  # Queue of BRs to process in startup protocol
 current_startup_br = None  # BR currently being processed in startup
+startup_in_progress = False  # Flag to indicate if startup protocol is in progress
+override_triggered = False  # Flag to indicate if override has been triggered
 
 # Start MCP server and emergency handler thread
 def start_mcp():
@@ -88,11 +89,17 @@ def start_mcp():
 
 # Handle emergency commands (running in parallel)
 def emergency_command_handler():
+    global override_triggered
     while True:
         # Simulate emergency command handling, with target BR selection
-        emergency_input = input("Enter command (e.g., 'BR01 STOPC' or 'ALL FFASTC'): ").strip()
+        emergency_input = input("Enter command (e.g., 'BR01 STOPC', 'ALL FFASTC', or 'OVERRIDE'): ").strip()
         if emergency_input:
-            process_command(emergency_input)
+            if emergency_input.upper() == 'OVERRIDE':
+                override_triggered = True
+                print("Override triggered. Proceeding with startup protocol using connected BRs.")
+                check_startup_completion()
+            else:
+                process_command(emergency_input)
 
         time.sleep(1)
 
@@ -112,7 +119,7 @@ def process_command(emergency_input):
             else:
                 print("Invalid target. Use 'BR01' or 'ALL'.")
         else:
-            print("Invalid input format. Use 'BR01 FFASTC' or 'ALL STOPC'.")
+            print("Invalid input format. Use 'BR01 FFASTC', 'ALL STOPC', or 'OVERRIDE'.")
     except Exception as e:
         print(f"Error processing command: {e}")
 
@@ -273,8 +280,78 @@ def handle_station_message(address, message):
         }
         send_message(station_ports[station_id], noip_message)
 
-# Handle Checkpoint messages
 def handle_checkpoint_message(address, message):
+    global current_startup_br  # Ensure it refers to the global variable
+    log_event("Checkpoint Message Received", message)
+    checkpoint_id = message['client_id']
+    s_cpc = message['sequence_number']
+    sequence_numbers[(checkpoint_id, 'MCP')] = s_cpc
+    s_mcp = increment_sequence_number('MCP', checkpoint_id)
+
+    if message['message'] == 'CPIN':
+        # Handle initialization: Send AKIN
+        print(f"Checkpoint {checkpoint_id} initialized.")
+        ack_command = {
+            "client_type": "CPC",  # Recipient's client_type
+            "message": "AKIN",
+            "client_id": checkpoint_id,
+            "sequence_number": s_mcp
+        }
+        send_message(checkpoint_ports[checkpoint_id], ack_command)
+        if checkpoint_id not in connected_checkpoints:
+            connected_checkpoints.add(checkpoint_id)
+            print(f"Added {checkpoint_id} to connected Checkpoints.")
+            check_startup_completion()
+    elif message['message'] == 'TRIP':
+        print(f"TRIP signal received from {checkpoint_id}")
+        ack_command = {
+            "client_type": "CPC",
+            "message": "AKTR",
+            "client_id": checkpoint_id,
+            "sequence_number": s_mcp
+        }
+        send_message(checkpoint_ports[checkpoint_id], ack_command)
+        # Associate the TRIP with the current BR in the startup process
+        if current_startup_br:
+            block_id = get_block_by_checkpoint(checkpoint_id)
+            if block_id:
+                br_locations[current_startup_br] = block_id
+                print(f"BR {current_startup_br} is at {checkpoint_id} (Block: {block_id})")
+                print_current_positions()
+                current_startup_br = None  # Reset current BR
+                # Proceed to the next BR in the startup queue
+                process_next_startup_br()
+    elif message['message'] == 'STAT':
+        print(f"Checkpoint {checkpoint_id} STAT received.")
+        ack_command = {
+            "client_type": "CPC",
+            "message": "AKST",
+            "client_id": checkpoint_id,
+            "sequence_number": s_mcp
+        }
+        send_message(checkpoint_ports[checkpoint_id], ack_command)
+        if message['status'] == 'ERR':
+            error_command = {
+                "client_type": "CPC",
+                "message": "EXEC",
+                "client_id": checkpoint_id,
+                "sequence_number": s_mcp,
+                "action": "BLINK",
+                "br_id": ""
+            }
+            send_message(checkpoint_ports[checkpoint_id], error_command)
+    elif message['message'] == 'AKEX':
+        print(f"Checkpoint {checkpoint_id} acknowledged command.")
+    else:
+        # Handle unknown messages
+        noip_message = {
+            "client_type": "CPC",
+            "message": "NOIP",
+            "client_id": checkpoint_id,
+            "sequence_number": s_mcp
+        }
+        send_message(checkpoint_ports[checkpoint_id], noip_message)
+
     log_event("Checkpoint Message Received", message)
     checkpoint_id = message['client_id']
     s_cpc = message['sequence_number']
@@ -354,12 +431,21 @@ def get_block_by_checkpoint(checkpoint_id):
 
 # Check if startup protocol can be initiated
 def check_startup_completion():
-    global startup_completed
-    if not startup_completed and connected_brs and connected_stations and connected_checkpoints:
-        print("All BRs, Stations, and Checkpoints are connected. Starting startup protocol...")
-        startup_completed = True
-        # Start the startup protocol with the first BR
-        process_next_startup_br()
+    global startup_in_progress
+    if not startup_in_progress:
+        if connected_brs and connected_stations and connected_checkpoints:
+            startup_in_progress = True
+            print("All required devices are connected. Starting startup protocol...")
+            process_next_startup_br()
+        elif override_triggered:
+            if connected_brs:
+                startup_in_progress = True
+                print("Override activated. Starting startup protocol with connected BRs...")
+                process_next_startup_br()
+            else:
+                print("Override activated, but no BRs are connected.")
+        else:
+            print("Waiting for required devices to connect...")
 
 # Process the next BR in the startup queue
 def process_next_startup_br():
@@ -369,9 +455,10 @@ def process_next_startup_br():
         send_command_to_br(current_startup_br, "FSLOWC")
         print(f"Sent FSLOWC command to {current_startup_br} to find initial position.")
     else:
-        # All BRs have been processed
-        print("All BRs have been positioned. Starting normal operations.")
-        start_normal_operations()
+        current_startup_br = None  # No BR is currently being processed
+        if startup_in_progress:
+            print("Startup protocol completed with connected BRs.")
+            start_normal_operations()
 
 # Start normal operations
 def start_normal_operations():
@@ -380,7 +467,7 @@ def start_normal_operations():
 
 # Broadcast START command to all BRs to continue to the next checkpoint
 def broadcast_start():
-    for br_id in connected_brs:
+    for br_id in br_locations.keys():
         s_mcp = increment_sequence_number('MCP', br_id)
         action = determine_action_for_br(br_id)
         start_command = {
@@ -392,7 +479,7 @@ def broadcast_start():
         }
         send_message(ccp_ports[br_id], start_command)
         print(f"Sent '{action}' command to {br_id}")
-    print(f"START command broadcasted to all CCPs.")
+    print(f"START command broadcasted to all positioned BRs.")
 
 # Determine action for BR based on track map (e.g., handle turns)
 def determine_action_for_br(br_id):
@@ -424,9 +511,9 @@ def control_station_doors(station_id, action):
 def print_current_positions():
     print("Current Positions of Blade Runners:")
     for br_id, block_id in br_locations.items():
-        block_info = track_map[block_id]
-        checkpoint_id = block_info['checkpoint']
-        station_id = block_info['station']
+        block_info = track_map.get(block_id, {})
+        checkpoint_id = block_info.get('checkpoint', 'Unknown')
+        station_id = block_info.get('station', 'Unknown')
         print(f"BR {br_id} is at Block {block_id}, Checkpoint {checkpoint_id}, Station {station_id}")
 
 if __name__ == "__main__":
