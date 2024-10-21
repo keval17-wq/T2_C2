@@ -1,16 +1,14 @@
 from utils import create_socket, send_message, receive_message, log_event
 import time
 
-# Localhost IP for testing; replace with actual IP in a real environment
 MCP_IP = '127.0.0.1'
 MCP_PORT = 2000
 
-# Track sequence number for BR02
 sequence_number = 1000
 
 def start_ccp(ccp_id):
     print(f"Starting CCP for Blade Runner {ccp_id}...")
-    ccp_socket = create_socket(3002)  # Use port 3002 for BR02
+    ccp_socket = create_socket(3003)  # Use port 3003 for BR03
     send_initialization(ccp_socket, ccp_id)
 
     while True:
@@ -107,4 +105,4 @@ def send_status_update(ccp_id, status):
     send_message((MCP_IP, MCP_PORT), status_message)
 
 if __name__ == "__main__":
-    start_ccp("BR02")
+    start_ccp("BR03")
