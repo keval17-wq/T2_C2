@@ -280,8 +280,78 @@ def handle_station_message(address, message):
         }
         send_message(station_ports[station_id], noip_message)
 
-# Handle Checkpoint messages
 def handle_checkpoint_message(address, message):
+    global current_startup_br  # Ensure it refers to the global variable
+    log_event("Checkpoint Message Received", message)
+    checkpoint_id = message['client_id']
+    s_cpc = message['sequence_number']
+    sequence_numbers[(checkpoint_id, 'MCP')] = s_cpc
+    s_mcp = increment_sequence_number('MCP', checkpoint_id)
+
+    if message['message'] == 'CPIN':
+        # Handle initialization: Send AKIN
+        print(f"Checkpoint {checkpoint_id} initialized.")
+        ack_command = {
+            "client_type": "CPC",  # Recipient's client_type
+            "message": "AKIN",
+            "client_id": checkpoint_id,
+            "sequence_number": s_mcp
+        }
+        send_message(checkpoint_ports[checkpoint_id], ack_command)
+        if checkpoint_id not in connected_checkpoints:
+            connected_checkpoints.add(checkpoint_id)
+            print(f"Added {checkpoint_id} to connected Checkpoints.")
+            check_startup_completion()
+    elif message['message'] == 'TRIP':
+        print(f"TRIP signal received from {checkpoint_id}")
+        ack_command = {
+            "client_type": "CPC",
+            "message": "AKTR",
+            "client_id": checkpoint_id,
+            "sequence_number": s_mcp
+        }
+        send_message(checkpoint_ports[checkpoint_id], ack_command)
+        # Associate the TRIP with the current BR in the startup process
+        if current_startup_br:
+            block_id = get_block_by_checkpoint(checkpoint_id)
+            if block_id:
+                br_locations[current_startup_br] = block_id
+                print(f"BR {current_startup_br} is at {checkpoint_id} (Block: {block_id})")
+                print_current_positions()
+                current_startup_br = None  # Reset current BR
+                # Proceed to the next BR in the startup queue
+                process_next_startup_br()
+    elif message['message'] == 'STAT':
+        print(f"Checkpoint {checkpoint_id} STAT received.")
+        ack_command = {
+            "client_type": "CPC",
+            "message": "AKST",
+            "client_id": checkpoint_id,
+            "sequence_number": s_mcp
+        }
+        send_message(checkpoint_ports[checkpoint_id], ack_command)
+        if message['status'] == 'ERR':
+            error_command = {
+                "client_type": "CPC",
+                "message": "EXEC",
+                "client_id": checkpoint_id,
+                "sequence_number": s_mcp,
+                "action": "BLINK",
+                "br_id": ""
+            }
+            send_message(checkpoint_ports[checkpoint_id], error_command)
+    elif message['message'] == 'AKEX':
+        print(f"Checkpoint {checkpoint_id} acknowledged command.")
+    else:
+        # Handle unknown messages
+        noip_message = {
+            "client_type": "CPC",
+            "message": "NOIP",
+            "client_id": checkpoint_id,
+            "sequence_number": s_mcp
+        }
+        send_message(checkpoint_ports[checkpoint_id], noip_message)
+
     log_event("Checkpoint Message Received", message)
     checkpoint_id = message['client_id']
     s_cpc = message['sequence_number']
