@@ -69,6 +69,7 @@ br_locations = {}  # Key: br_id, Value: block_id
 startup_queue = []  # Queue of BRs to process in startup protocol
 current_startup_br = None  # BR currently being processed in startup
 startup_in_progress = False  # Flag to indicate if startup protocol is in progress
+override_triggered = False  # Flag to indicate if override has been triggered
 
 # Start MCP server and emergency handler thread
 def start_mcp():
@@ -88,11 +89,17 @@ def start_mcp():
 
 # Handle emergency commands (running in parallel)
 def emergency_command_handler():
+    global override_triggered
     while True:
         # Simulate emergency command handling, with target BR selection
-        emergency_input = input("Enter command (e.g., 'BR01 STOPC' or 'ALL FFASTC'): ").strip()
+        emergency_input = input("Enter command (e.g., 'BR01 STOPC', 'ALL FFASTC', or 'OVERRIDE'): ").strip()
         if emergency_input:
-            process_command(emergency_input)
+            if emergency_input.upper() == 'OVERRIDE':
+                override_triggered = True
+                print("Override triggered. Proceeding with startup protocol using connected BRs.")
+                check_startup_completion()
+            else:
+                process_command(emergency_input)
 
         time.sleep(1)
 
@@ -112,7 +119,7 @@ def process_command(emergency_input):
             else:
                 print("Invalid target. Use 'BR01' or 'ALL'.")
         else:
-            print("Invalid input format. Use 'BR01 FFASTC' or 'ALL STOPC'.")
+            print("Invalid input format. Use 'BR01 FFASTC', 'ALL STOPC', or 'OVERRIDE'.")
     except Exception as e:
         print(f"Error processing command: {e}")
 
@@ -184,9 +191,7 @@ def handle_ccp_message(address, message):
             connected_brs.add(ccp_id)
             startup_queue.append(ccp_id)
             print(f"Added {ccp_id} to connected BRs.")
-            # Start processing if not already in progress
-            if not current_startup_br:
-                process_next_startup_br()
+            check_startup_completion()
     elif message['message'] == 'STAT':
         print(f"BR {ccp_id} STAT received.")
         ack_command = {
@@ -233,6 +238,7 @@ def handle_station_message(address, message):
         if station_id not in connected_stations:
             connected_stations.add(station_id)
             print(f"Added {station_id} to connected Stations.")
+            check_startup_completion()
     elif message['message'] == 'TRIP':
         # Handle TRIP messages (if any)
         print(f"TRIP message received from Station {station_id}")
@@ -295,6 +301,7 @@ def handle_checkpoint_message(address, message):
         if checkpoint_id not in connected_checkpoints:
             connected_checkpoints.add(checkpoint_id)
             print(f"Added {checkpoint_id} to connected Checkpoints.")
+            check_startup_completion()
     elif message['message'] == 'TRIP':
         print(f"TRIP signal received from {checkpoint_id}")
         ack_command = {
@@ -352,6 +359,24 @@ def get_block_by_checkpoint(checkpoint_id):
             return block_id
     return None
 
+# Check if startup protocol can be initiated
+def check_startup_completion():
+    global startup_in_progress
+    if not startup_in_progress:
+        if connected_brs and connected_stations and connected_checkpoints:
+            startup_in_progress = True
+            print("All required devices are connected. Starting startup protocol...")
+            process_next_startup_br()
+        elif override_triggered:
+            if connected_brs:
+                startup_in_progress = True
+                print("Override activated. Starting startup protocol with connected BRs...")
+                process_next_startup_br()
+            else:
+                print("Override activated, but no BRs are connected.")
+        else:
+            print("Waiting for required devices to connect...")
+
 # Process the next BR in the startup queue
 def process_next_startup_br():
     global current_startup_br
@@ -361,6 +386,9 @@ def process_next_startup_br():
         print(f"Sent FSLOWC command to {current_startup_br} to find initial position.")
     else:
         current_startup_br = None  # No BR is currently being processed
+        if startup_in_progress:
+            print("Startup protocol completed with connected BRs.")
+            start_normal_operations()
 
 # Start normal operations
 def start_normal_operations():
@@ -369,7 +397,7 @@ def start_normal_operations():
 
 # Broadcast START command to all BRs to continue to the next checkpoint
 def broadcast_start():
-    for br_id in connected_brs:
+    for br_id in br_locations.keys():
         s_mcp = increment_sequence_number('MCP', br_id)
         action = determine_action_for_br(br_id)
         start_command = {
@@ -381,7 +409,7 @@ def broadcast_start():
         }
         send_message(ccp_ports[br_id], start_command)
         print(f"Sent '{action}' command to {br_id}")
-    print(f"START command broadcasted to all CCPs.")
+    print(f"START command broadcasted to all positioned BRs.")
 
 # Determine action for BR based on track map (e.g., handle turns)
 def determine_action_for_br(br_id):
