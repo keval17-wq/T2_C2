@@ -65,10 +65,10 @@ def increment_sequence_number(sender, receiver):
 connected_brs = set()
 connected_stations = set()
 connected_checkpoints = set()
-startup_completed = False
 br_locations = {}  # Key: br_id, Value: block_id
 startup_queue = []  # Queue of BRs to process in startup protocol
 current_startup_br = None  # BR currently being processed in startup
+startup_in_progress = False  # Flag to indicate if startup protocol is in progress
 
 # Start MCP server and emergency handler thread
 def start_mcp():
@@ -184,7 +184,9 @@ def handle_ccp_message(address, message):
             connected_brs.add(ccp_id)
             startup_queue.append(ccp_id)
             print(f"Added {ccp_id} to connected BRs.")
-            check_startup_completion()
+            # Start processing if not already in progress
+            if not current_startup_br:
+                process_next_startup_br()
     elif message['message'] == 'STAT':
         print(f"BR {ccp_id} STAT received.")
         ack_command = {
@@ -231,7 +233,6 @@ def handle_station_message(address, message):
         if station_id not in connected_stations:
             connected_stations.add(station_id)
             print(f"Added {station_id} to connected Stations.")
-            check_startup_completion()
     elif message['message'] == 'TRIP':
         # Handle TRIP messages (if any)
         print(f"TRIP message received from Station {station_id}")
@@ -294,7 +295,6 @@ def handle_checkpoint_message(address, message):
         if checkpoint_id not in connected_checkpoints:
             connected_checkpoints.add(checkpoint_id)
             print(f"Added {checkpoint_id} to connected Checkpoints.")
-            check_startup_completion()
     elif message['message'] == 'TRIP':
         print(f"TRIP signal received from {checkpoint_id}")
         ack_command = {
@@ -352,15 +352,6 @@ def get_block_by_checkpoint(checkpoint_id):
             return block_id
     return None
 
-# Check if startup protocol can be initiated
-def check_startup_completion():
-    global startup_completed
-    if not startup_completed and connected_brs and connected_stations and connected_checkpoints:
-        print("All BRs, Stations, and Checkpoints are connected. Starting startup protocol...")
-        startup_completed = True
-        # Start the startup protocol with the first BR
-        process_next_startup_br()
-
 # Process the next BR in the startup queue
 def process_next_startup_br():
     global current_startup_br
@@ -369,9 +360,7 @@ def process_next_startup_br():
         send_command_to_br(current_startup_br, "FSLOWC")
         print(f"Sent FSLOWC command to {current_startup_br} to find initial position.")
     else:
-        # All BRs have been processed
-        print("All BRs have been positioned. Starting normal operations.")
-        start_normal_operations()
+        current_startup_br = None  # No BR is currently being processed
 
 # Start normal operations
 def start_normal_operations():
@@ -424,9 +413,9 @@ def control_station_doors(station_id, action):
 def print_current_positions():
     print("Current Positions of Blade Runners:")
     for br_id, block_id in br_locations.items():
-        block_info = track_map[block_id]
-        checkpoint_id = block_info['checkpoint']
-        station_id = block_info['station']
+        block_info = track_map.get(block_id, {})
+        checkpoint_id = block_info.get('checkpoint', 'Unknown')
+        station_id = block_info.get('station', 'Unknown')
         print(f"BR {br_id} is at Block {block_id}, Checkpoint {checkpoint_id}, Station {station_id}")
 
 if __name__ == "__main__":
