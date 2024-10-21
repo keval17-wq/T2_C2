@@ -1,4 +1,5 @@
 from utils import create_socket, send_message, receive_message, log_event
+import random
 
 def start_ccp(ccp_id):
     print(f"Starting CCP for Blade Runner {ccp_id}...")
@@ -10,14 +11,23 @@ def start_ccp(ccp_id):
         message, _ = receive_message(ccp_socket)
         handle_mcp_command(message, ccp_id)
 
+# def send_initialization(socket, ccp_id):
+#     init_message = {
+#         "client_type": "ccp",
+#         "message": "CCIN",
+#         "client_id": ccp_id
+#     }
+#     print(f"Sending initialization message to MCP: {init_message}")
+#     send_message(("127.0.0.1", 2000, ), init_message)  # Use correct MCP IP address
 def send_initialization(socket, ccp_id):
     init_message = {
         "client_type": "ccp",
         "message": "CCIN",
-        "client_id": ccp_id
+        "client_id": ccp_id,
+        "sequence_number": random.randint(1000, 30000)  # Ensure it includes a sequence number
     }
     print(f"Sending initialization message to MCP: {init_message}")
-    send_message(("127.0.0.1", 2001), init_message)  # Use correct MCP IP address
+    send_message(("127.0.0.1", 2000), init_message)  # Use correct MCP IP address
 
 def handle_mcp_command(message, ccp_id):
     log_event("MCP Command Received", message)
