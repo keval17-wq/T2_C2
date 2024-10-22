@@ -39,7 +39,22 @@ class synchronise:
         except Exception as e:
             print(f"Unable to update message: {e}")
 
+    #Function that compares messages
+    def sequence_number_comparator(self, message):
+        index = next((i for i, entry in enumerate(self.previous_message) if entry["client_id"] == message["client_id"]), None)
+        thisEntry =  self.previous_message[index]
+        if int(thisEntry["current_sequence"]) == int(thisEntry["previous_sequence"]) + 1:
+            print("yay!")
+        else:
+            print("oh no!")
+
+
+
+
+
 if __name__ == "__main__":
     synchroniser = synchronise({"client_type": "CCP", "message": "CCIN", "client_id": "BR01", "sequence_number": "1000"})
     synchroniser.update_sequences({"client_type": "CCP", "message": "CCIN", "client_id": "BR01", "sequence_number": "1001"})
+    synchroniser.update_sequences({"client_type": "CCP", "message": "CCIN", "client_id": "BR01", "sequence_number": "1002"})
+    synchroniser.sequence_number_comparator({"client_id": "BR01"})
     print(synchroniser.previous_message)
