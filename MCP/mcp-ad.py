@@ -1,5 +1,3 @@
-# expect from station 
-
 import socket
 import threading
 import random
@@ -13,6 +11,7 @@ ccp_ports = {
     'BR03': ('127.0.0.1', 3003),
     'BR04': ('127.0.0.1', 3004),
     'BR05': ('127.0.0.1', 3005)
+    # Add more BRs as needed
 }
 
 # Static port mapping for Stations
@@ -27,6 +26,20 @@ station_ports = {
     'ST08': ('127.0.0.1', 4008),
     'ST09': ('127.0.0.1', 4009),
     'ST10': ('127.0.0.1', 4010)
+}
+
+# Track map for block management
+track_map = {
+    'block_1': {'station': 'ST01', 'next_block': 'block_2', 'turn': False},
+    'block_2': {'station': 'ST02', 'next_block': 'block_3', 'turn': False},
+    'block_3': {'station': 'ST03', 'next_block': 'block_4', 'turn': True, 'turn_severity': 0.5},
+    'block_4': {'station': 'ST04', 'next_block': 'block_5', 'turn': False},
+    'block_5': {'station': 'ST05', 'next_block': 'block_6', 'turn': False},
+    'block_6': {'station': 'ST06', 'next_block': 'block_7', 'turn': True, 'turn_severity': 0.7},
+    'block_7': {'station': 'ST07', 'next_block': 'block_8', 'turn': False},
+    'block_8': {'station': 'ST08', 'next_block': 'block_9', 'turn': False},
+    'block_9': {'station': 'ST09', 'next_block': 'block_10', 'turn': False},
+    'block_10': {'station': 'ST10', 'next_block': 'block_1', 'turn': False}
 }
 
 # Sequence numbers per client and per direction
@@ -45,8 +58,11 @@ def increment_sequence_number(sender, receiver):
 # State variables
 connected_brs = set()
 connected_stations = set()
-startup_completed = False
-br_locations = {}  # Key: br_id, Value: station_id
+startup_queue = []  # Queue of BRs to process in startup protocol
+current_startup_br = None  # BR currently being processed in startup
+startup_in_progress = False  # Flag to indicate if startup protocol is in progress
+override_triggered = False  # Flag to indicate if override has been triggered
+br_locations = {}  # Key: br_id, Value: block_id
 
 # Start MCP server and emergency handler thread
 def start_mcp():
@@ -66,12 +82,17 @@ def start_mcp():
 
 # Handle emergency commands (running in parallel)
 def emergency_command_handler():
+    global override_triggered
     while True:
         # Simulate emergency command handling, with target BR selection
-        emergency_input = input("Enter command (e.g., 'BR01 STOPC' or 'ALL FFASTC'): ").strip()
+        emergency_input = input("Enter command (e.g., 'BR01 STOPC', 'ALL FFASTC', or 'OVERRIDE'): ").strip()
         if emergency_input:
-            process_command(emergency_input)
-
+            if emergency_input.upper() == 'OVERRIDE':
+                override_triggered = True
+                print("Override triggered. Proceeding with startup protocol using connected BRs.")
+                check_startup_completion()
+            else:
+                process_command(emergency_input)
         time.sleep(1)
 
 # Process the user input command
@@ -90,7 +111,7 @@ def process_command(emergency_input):
             else:
                 print("Invalid target. Use 'BR01' or 'ALL'.")
         else:
-            print("Invalid input format. Use 'BR01 FFASTC' or 'ALL STOPC'.")
+            print("Invalid input format. Use 'BR01 FFASTC', 'ALL STOPC', or 'OVERRIDE'.")
     except Exception as e:
         print(f"Error processing command: {e}")
 
@@ -113,7 +134,7 @@ def send_command_to_br(br_id, action):
     if br_id in ccp_ports:
         s_mcp = increment_sequence_number('MCP', br_id)
         command = {
-            "client_type": "CCP",  # Set to recipient's client_type
+            "client_type": "CCP",  # Recipient's client_type
             "message": "EXEC",
             "client_id": br_id,
             "sequence_number": s_mcp,
@@ -157,7 +178,9 @@ def handle_ccp_message(address, message):
         send_message(ccp_ports[ccp_id], ack_command)  # Acknowledge initialization
         if ccp_id not in connected_brs:
             connected_brs.add(ccp_id)
+            startup_queue.append(ccp_id)
             print(f"Added {ccp_id} to connected BRs.")
+            print(f"Currently connected BRs: {sorted(connected_brs)}")  # Print connected BRs
             check_startup_completion()
     elif message['message'] == 'STAT':
         print(f"BR {ccp_id} STAT received.")
@@ -186,57 +209,68 @@ def handle_ccp_message(address, message):
 
 # Handle Station messages
 def handle_station_message(address, message):
+    global current_startup_br
     log_event("Station Message Received", message)
     station_id = message['client_id']
     s_stc = message['sequence_number']
     sequence_numbers[(station_id, 'MCP')] = s_stc
-    s_mcp = increment_sequence_number('MCP', station_id)
 
-    if message['message'] == 'STIN':
-        # Handle initialization: Send AKIN
-        print(f"Station {station_id} initialized.")
+    if message['message'] == 'TRIP':
+        print(f"TRIP message received from Station {station_id}")
+
+        # Acknowledge the TRIP message from the station
         ack_command = {
-            "client_type": "STC",  # Recipient's client_type
+            "client_type": "STC",
+            "message": "AKTR",
+            "client_id": station_id,
+            "sequence_number": increment_sequence_number('MCP', station_id)
+        }
+        send_message(station_ports[station_id], ack_command)
+
+        # Associate the TRIP with the current BR in the startup process
+        if current_startup_br:
+            block_id = get_block_by_station(station_id)
+            if block_id:
+                br_locations[current_startup_br] = block_id  # Store block_id instead of station_id
+                print(f"BR {current_startup_br} is at Station {station_id} (Block: {block_id})")
+                print_current_positions()
+                current_startup_br = None  # Reset current BR
+                process_next_startup_br()
+            else:
+                print(f"Station {station_id} not found in track map.")
+        else:
+            print(f"No BR is currently in startup process. TRIP from {station_id} ignored.")
+
+    elif message['message'] == 'STIN':
+        print(f"Station {station_id} initialized.")
+        # Acknowledge the station initialization
+        ack_command = {
+            "client_type": "STC",
             "message": "AKIN",
             "client_id": station_id,
-            "sequence_number": s_mcp
+            "sequence_number": increment_sequence_number('MCP', station_id)
         }
         send_message(station_ports[station_id], ack_command)
         if station_id not in connected_stations:
             connected_stations.add(station_id)
             print(f"Added {station_id} to connected Stations.")
             check_startup_completion()
-    elif message['message'] == 'TRIP':
-        # Handle TRIP messages
-        print(f"TRIP message received from Station {station_id}")
-        ack_command = {
-            "client_type": "STC",
-            "message": "AKTR",
-            "client_id": station_id,
-            "sequence_number": s_mcp
-        }
-        send_message(station_ports[station_id], ack_command)
-        # Update BR location
-        br_id = message.get('br_id')
-        if br_id:
-            br_locations[br_id] = station_id
-            print(f"BR {br_id} is at station {station_id}")
-            check_all_brs_positioned()
+
     elif message['message'] == 'STAT':
         print(f"Station {station_id} STAT received.")
         ack_command = {
             "client_type": "STC",
             "message": "AKST",
             "client_id": station_id,
-            "sequence_number": s_mcp
+            "sequence_number": increment_sequence_number('MCP', station_id)
         }
         send_message(station_ports[station_id], ack_command)
-        if message['status'] == 'ERR':
+        if message.get('status') == 'ERR':
             error_command = {
                 "client_type": "STC",
                 "message": "EXEC",
                 "client_id": station_id,
-                "sequence_number": s_mcp,
+                "sequence_number": increment_sequence_number('MCP', station_id),
                 "action": "BLINK",
                 "br_id": ""
             }
@@ -249,29 +283,47 @@ def handle_station_message(address, message):
             "client_type": "STC",
             "message": "NOIP",
             "client_id": station_id,
-            "sequence_number": s_mcp
+            "sequence_number": s_stc
         }
         send_message(station_ports[station_id], noip_message)
 
+# Get block_id by station_id
+def get_block_by_station(station_id):
+    for block_id, block_info in track_map.items():
+        if block_info['station'] == station_id:
+            return block_id
+    return None
+
 # Check if startup protocol can be initiated
 def check_startup_completion():
-    global startup_completed
-    if not startup_completed and connected_brs and connected_stations:
-        print("All BRs and Stations are connected. Starting startup protocol...")
-        startup_completed = True
-        start_startup_protocol()
+    global startup_in_progress
+    if not startup_in_progress:
+        if connected_brs and connected_stations:
+            startup_in_progress = True
+            print("All required devices are connected. Starting startup protocol...")
+            process_next_startup_br()
+        elif override_triggered:
+            if connected_brs:
+                startup_in_progress = True
+                print("Override activated. Starting startup protocol with connected BRs...")
+                process_next_startup_br()
+            else:
+                print("Override activated, but no BRs are connected.")
+        else:
+            print("Waiting for required devices to connect...")
 
-# Start the startup protocol
-def start_startup_protocol():
-    for br_id in connected_brs:
-        send_command_to_br(br_id, "FSLOWC")
-        print(f"Sent FSLOWC command to {br_id} to find initial position.")
-
-# Check if all BRs have been positioned
-def check_all_brs_positioned():
-    if len(br_locations) == len(connected_brs):
-        print("All BRs have been positioned. Starting normal operations.")
-        start_normal_operations()
+# Process the next BR in the startup queue
+def process_next_startup_br():
+    global current_startup_br
+    if startup_queue:
+        current_startup_br = startup_queue.pop(0)
+        send_command_to_br(current_startup_br, "FSLOWC")
+        print(f"Sent FSLOWC command to {current_startup_br} to find initial position.")
+    else:
+        current_startup_br = None  # No BR is currently being processed
+        if startup_in_progress:
+            print("Startup protocol completed with connected BRs.")
+            start_normal_operations()
 
 # Start normal operations
 def start_normal_operations():
@@ -280,29 +332,46 @@ def start_normal_operations():
 
 # Broadcast START command to all BRs to continue to the next station
 def broadcast_start():
-    for ccp_id, address in ccp_ports.items():
-        s_mcp = increment_sequence_number('MCP', ccp_id)
+    for br_id in br_locations.keys():
+        s_mcp = increment_sequence_number('MCP', br_id)
+        action = determine_action_for_br(br_id)
         start_command = {
             "client_type": "CCP",
             "message": "EXEC",
-            "client_id": ccp_id,
+            "client_id": br_id,
             "sequence_number": s_mcp,
-            "action": "FFASTC"  # BR moves forward fast, door is closed
+            "action": action  # Action based on track conditions
         }
-        send_message(address, start_command)
-    print(f"START command broadcasted to all CCPs.")
+        send_message(ccp_ports[br_id], start_command)
+        print(f"Sent '{action}' command to {br_id}")
+    print(f"START command broadcasted to all positioned BRs.")
 
-# Control station doors
-def control_station_doors(station_id, action):
-    s_mcp = increment_sequence_number('MCP', station_id)
-    door_command = {
-        "client_type": "STC",
-        "message": "DOOR",
-        "client_id": station_id,
-        "sequence_number": s_mcp,
-        "action": action
-    }
-    send_message(station_ports[station_id], door_command)
+# Determine action for BR based on track map (e.g., handle turns)
+def determine_action_for_br(br_id):
+    block_id = br_locations.get(br_id)
+    if block_id:
+        block_info = track_map.get(block_id)
+        if block_info:
+            if block_info.get('turn'):
+                severity = block_info.get('turn_severity', 0)
+                # Decide to send slow command based on severity
+                return "FSLOWC"
+            else:
+                return "FFASTC"
+        else:
+            print(f"Block {block_id} not found in track map.")
+            return "FFASTC"
+    else:
+        print(f"BR {br_id} location unknown.")
+        return "FFASTC"  # Default action
+
+# Print current positions of BRs
+def print_current_positions():
+    print("Current Positions of Blade Runners:")
+    for br_id, block_id in br_locations.items():
+        block_info = track_map.get(block_id, {})
+        station_id = block_info.get('station', 'Unknown')
+        print(f"BR {br_id} is at Block {block_id}, Station {station_id}")
 
 if __name__ == "__main__":
     start_mcp()

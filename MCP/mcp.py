@@ -4,13 +4,20 @@ import random
 from utils import create_socket, receive_message, send_message, log_event
 import time
 
-# Static port mapping for CCPs (Blade Runners)
+# Static port mapping for CCPs (Blade Runners) 10.126.117.46
 ccp_ports = {
-    'BR01': ('127.0.0.1', 3001),
+    'BR01': ('10.20.30.147', 3001),
     'BR02': ('127.0.0.1', 3002),
     'BR03': ('127.0.0.1', 3003),
     'BR04': ('127.0.0.1', 3004),
-    'BR05': ('127.0.0.1', 3005)
+    'BR05': ('127.0.0.1', 3005),
+    'BR06': ('10.20.30.147', 3006),
+    'BR07': ('127.0.0.1', 3007),
+    'BR08': ('127.0.0.1', 3008),
+    'BR09': ('127.0.0.1', 3009),
+    'BR10': ('10.20.30.147', 3010)
+
+
 }
 
 # Static port mapping for Stations
