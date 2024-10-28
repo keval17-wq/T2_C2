@@ -11,42 +11,7 @@ ccp_ports = {
     'BR03': ('127.0.0.1', 3003),
     'BR04': ('127.0.0.1', 3004),
     'BR05': ('127.0.0.1', 3005),
-
-    'BR06': ('127.0.0.1', 3006),
-    'BR07': ('127.0.0.1', 3007),
-    'BR08': ('127.0.0.1', 3008),
-    'BR09': ('127.0.0.1', 3009),
-    'BR10': ('127.0.0.1', 3010),
-
-    'BR11': ('127.0.0.1', 3011),
-    'BR12': ('127.0.0.1', 3012),
-    'BR13': ('127.0.0.1', 3013),
-    'BR14': ('127.0.0.1', 3014),
-    'BR15': ('127.0.0.1', 3015),
-
-    'BR16': ('127.0.0.1', 3016),
-    'BR17': ('127.0.0.1', 3017),
-    'BR18': ('127.0.0.1', 3018),
-    'BR19': ('127.0.0.1', 3019),
-    'BR20': ('127.0.0.1', 3020),
-
-    'BR21': ('127.0.0.1', 3021),
-    'BR22': ('127.0.0.1', 3022),
-    'BR23': ('127.0.0.1', 3023),
-    'BR24': ('127.0.0.1', 3024),
-    'BR25': ('127.0.0.1', 3025),
-    
-    'BR26': ('127.0.0.1', 3026),
-    'BR27': ('127.0.0.1', 3027),
-    'BR28': ('127.0.0.1', 3028),
-    'BR29': ('127.0.0.1', 3029),
-    'BR30': ('127.0.0.1', 3030),
-
-    'BR31': ('127.0.0.1', 3031),
-    'BR32': ('127.0.0.1', 3032)
-
-
-
+    # ... Add other BRs as needed
 }
 
 # Static port mapping for Stations
@@ -97,7 +62,7 @@ startup_queue = []  # Queue of BRs to process in startup protocol
 current_startup_br = None  # BR currently being processed in startup
 startup_in_progress = False  # Flag to indicate if startup protocol is in progress
 override_triggered = False  # Flag to indicate if override has been triggered
-br_locations = {}  # Key: br_id, Value: block_id
+br_map = {}  # Key: br_id, Value: block_id
 
 # Start MCP server and emergency handler thread
 def start_mcp():
@@ -138,7 +103,7 @@ def process_command(emergency_input):
         if len(parts) == 2:
             target, action = parts
             if target.upper() == 'ALL':
-                # Broadcast to all BRs
+                # Broadcast to all connected BRs
                 broadcast_command(action)
             elif target.startswith("BR"):
                 # Send command to specific BR
@@ -150,9 +115,9 @@ def process_command(emergency_input):
     except Exception as e:
         print(f"Error processing command: {e}")
 
-# Broadcast a command to all CCPs
+# Broadcast a command to all connected CCPs
 def broadcast_command(action):
-    for ccp_id, address in ccp_ports.items():
+    for ccp_id in connected_brs:
         s_mcp = increment_sequence_number('MCP', ccp_id)
         command = {
             "client_type": "CCP",  # Set to recipient's client_type
@@ -161,12 +126,12 @@ def broadcast_command(action):
             "sequence_number": s_mcp,
             "action": action.upper()
         }
-        send_message(address, command)
-    print(f"Broadcast command '{action}' sent to all CCPs.")
+        send_message(ccp_ports[ccp_id], command)
+    print(f"Broadcast command '{action}' sent to all connected BRs.")
 
 # Send a specific command to a single BR
 def send_command_to_br(br_id, action):
-    if br_id in ccp_ports:
+    if br_id in connected_brs:
         s_mcp = increment_sequence_number('MCP', br_id)
         command = {
             "client_type": "CCP",  # Recipient's client_type
@@ -178,7 +143,7 @@ def send_command_to_br(br_id, action):
         send_message(ccp_ports[br_id], command)
         print(f"Command '{action}' sent to {br_id}.")
     else:
-        print(f"BR ID {br_id} not recognized.")
+        print(f"BR ID {br_id} not connected.")
 
 # Handle incoming messages
 def handle_message(address, message):
@@ -262,11 +227,11 @@ def handle_station_message(address, message):
         }
         send_message(station_ports[station_id], ack_command)
 
-        # Associate the TRIP with the current BR in the startup process
         if current_startup_br:
-            block_id = get_block_by_station(station_id)
+            # Handle TRIP message during startup as before
+            block_id = get_block(station_id)
             if block_id:
-                br_locations[current_startup_br] = block_id  # Store block_id instead of station_id
+                br_map[current_startup_br] = block_id  # Store block_id instead of station_id
                 print(f"BR {current_startup_br} is at Station {station_id} (Block: {block_id})")
                 print_current_positions()
                 current_startup_br = None  # Reset current BR
@@ -274,7 +239,29 @@ def handle_station_message(address, message):
             else:
                 print(f"Station {station_id} not found in track map.")
         else:
-            print(f"No BR is currently in startup process. TRIP from {station_id} ignored.")
+            # Handle TRIP message during normal operations
+            # Try to find which BR is expected at this station
+            br_found = False
+            for br_id, current_block_id in br_map.items():
+                # Get the next block for this BR, considering only connected stations
+                next_block_id = get_next_block(current_block_id)
+                if next_block_id:
+                    next_block_info = track_map.get(next_block_id)
+                    next_station_id = next_block_info.get('station')
+                    if next_station_id == station_id:
+                        # Update BR's location
+                        br_map[br_id] = next_block_id
+                        print(f"BR {br_id} arrived at Station {station_id} (Block: {next_block_id})")
+                        print_current_positions()
+
+                        # Send FSLOWC command to the BR
+                        action = "FSLOWC"
+                        send_command_to_br(br_id, action)
+
+                        br_found = True
+                        break
+            if not br_found:
+                print(f"No BR expected at Station {station_id} at this time.")
 
     elif message['message'] == 'STIN':
         print(f"Station {station_id} initialized.")
@@ -323,11 +310,35 @@ def handle_station_message(address, message):
         send_message(station_ports[station_id], noip_message)
 
 # Get block_id by station_id
-def get_block_by_station(station_id):
+def get_block(station_id):
     for block_id, block_info in track_map.items():
         if block_info['station'] == station_id:
             return block_id
     return None
+
+# Function to get the next block, skipping unconnected stations
+def get_next_block(current_block_id):
+    next_block_id = current_block_id
+    visited_blocks = set()
+    while True:
+        if next_block_id in visited_blocks:
+            return None  # Prevent infinite loops
+        visited_blocks.add(next_block_id)
+
+        current_block_info = track_map.get(next_block_id)
+        if current_block_info:
+            next_block_id = current_block_info.get('next_block')
+            if not next_block_id or next_block_id == current_block_id:
+                return None  # End of the track or loop detected
+            next_block_info = track_map.get(next_block_id)
+            next_station_id = next_block_info.get('station')
+            if next_station_id in connected_stations:
+                return next_block_id
+            else:
+                # Skip to the next block
+                continue
+        else:
+            return None
 
 # Check if startup protocol can be initiated
 def check_startup_completion():
@@ -367,7 +378,7 @@ def start_normal_operations():
 
 # Broadcast START command to all BRs to continue to the next station
 def broadcast_start():
-    for br_id in br_locations.keys():
+    for br_id in br_map.keys():
         s_mcp = increment_sequence_number('MCP', br_id)
         action = determine_action_for_br(br_id)
         start_command = {
@@ -383,7 +394,7 @@ def broadcast_start():
 
 # Determine action for BR based on track map (e.g., handle turns)
 def determine_action_for_br(br_id):
-    block_id = br_locations.get(br_id)
+    block_id = br_map.get(br_id)
     if block_id:
         block_info = track_map.get(block_id)
         if block_info:
@@ -403,7 +414,7 @@ def determine_action_for_br(br_id):
 # Print current positions of BRs
 def print_current_positions():
     print("Current Positions of Blade Runners:")
-    for br_id, block_id in br_locations.items():
+    for br_id, block_id in br_map.items():
         block_info = track_map.get(block_id, {})
         station_id = block_info.get('station', 'Unknown')
         print(f"BR {br_id} is at Block {block_id}, Station {station_id}")
