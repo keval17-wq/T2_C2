@@ -6,40 +6,65 @@ import time
 
 # Static port mapping for CCPs (Blade Runners)
 ccp_ports = {
-    'BR01': ('127.0.0.1', 3001),
-    'BR02': ('127.0.0.1', 3002),
-    'BR03': ('127.0.0.1', 3003),
-    'BR04': ('127.0.0.1', 3004),
-    'BR05': ('127.0.0.1', 3005),
-    # ... Add other BRs as needed
+    'BR01': ('10.20.30.101', 3001),
+    'BR02': ('10.20.30.102', 3002),
+    'BR03': ('10.20.30.103', 3003),
+    'BR04': ('10.20.30.104', 3004),
+    'BR05': ('10.20.30.105', 3005),
+    'BR06': ('10.20.30.106', 3006),
+    'BR07': ('10.20.30.107', 3007),
+    'BR08': ('10.20.30.108', 3008),
+    'BR09': ('10.20.30.109', 3009),
+    'BR10': ('10.20.30.110', 3010),
+    'BR11': ('10.20.30.111', 3011),
+    'BR12': ('10.20.30.112', 3012),
+    'BR13': ('10.20.30.113', 3013),
+    'BR14': ('10.20.30.114', 3014),
+    'BR15': ('10.20.30.115', 3015),
+    'BR16': ('10.20.30.116', 3016),
+    'BR17': ('10.20.30.117', 3017),
+    'BR18': ('10.20.30.118', 3018),
+    'BR19': ('10.20.30.119', 3019),
+    'BR20': ('10.20.30.120', 3020),
+    'BR21': ('10.20.30.121', 3021),
+    'BR22': ('10.20.30.122', 3022),
+    'BR23': ('10.20.30.123', 3023),
+    'BR24': ('10.20.30.124', 3024),
+    'BR25': ('10.20.30.125', 3025),
+    'BR26': ('10.20.30.126', 3026),
+    'BR27': ('10.20.30.127', 3027),
+    'BR28': ('10.20.30.128', 3028),
+    'BR29': ('10.20.30.129', 3029),
+    'BR30': ('10.20.30.130', 3030),
+    'BR31': ('10.20.30.131', 3031),
+    'BR32': ('10.20.30.132', 3032),
 }
 
-# Static port mapping for Stations
+
 station_ports = {
-    'ST01': ('127.0.0.1', 4001),
-    'ST02': ('127.0.0.1', 4002),
-    'ST03': ('127.0.0.1', 4003),
-    'ST04': ('127.0.0.1', 4004),
-    'ST05': ('127.0.0.1', 4005),
-    'ST06': ('127.0.0.1', 4006),
-    'ST07': ('127.0.0.1', 4007),
-    'ST08': ('127.0.0.1', 4008),
-    'ST09': ('127.0.0.1', 4009),
-    'ST10': ('127.0.0.1', 4010)
+    'ST01': ('10.20.30.201', 4001),
+    'ST02': ('10.20.30.202', 4002),
+    'ST03': ('10.20.30.203', 4003),
+    'ST04': ('10.20.30.204', 4004),
+    'ST05': ('10.20.30.205', 4005),
+    'ST06': ('10.20.30.206', 4006),
+    'ST07': ('10.20.30.207', 4007),
+    'ST08': ('10.20.30.208', 4008),
+    'ST09': ('10.20.30.209', 4009),
+    'ST10': ('10.20.30.210', 4010)
 }
+
 
 # Track map with both next and previous blocks for clockwise and anti-clockwise navigation
 track_map = {
-    'block_1': {'station': 'ST01', 'next_block': 'block_2', 'previous_block': 'block_10', 'turn': False},
-    'block_2': {'station': 'ST02', 'next_block': 'block_3', 'previous_block': 'block_1', 'turn': False},
-    'block_3': {'station': 'ST03', 'next_block': 'block_4', 'previous_block': 'block_2', 'turn': True, 'turn_severity': 0.5},
-    'block_4': {'station': 'ST04', 'next_block': 'block_5', 'previous_block': 'block_3', 'turn': False},
-    'block_5': {'station': 'ST05', 'next_block': 'block_6', 'previous_block': 'block_4', 'turn': False},
-    'block_6': {'station': 'ST06', 'next_block': 'block_7', 'previous_block': 'block_5', 'turn': True, 'turn_severity': 0.7},
-    'block_7': {'station': 'ST07', 'next_block': 'block_8', 'previous_block': 'block_6', 'turn': False},
-    'block_8': {'station': 'ST08', 'next_block': 'block_9', 'previous_block': 'block_7', 'turn': False},
-    'block_9': {'station': 'ST09', 'next_block': 'block_10', 'previous_block': 'block_8', 'turn': False},
-    'block_10': {'station': 'ST10', 'next_block': 'block_1', 'previous_block': 'block_9', 'turn': False}
+    'block_1': {'station': 'ST02', 'next_block': 'block_2', 'previous_block': 'block_5', 'turn': False},
+    
+    'block_2': {'station': 'ST05', 'next_block': 'block_3', 'previous_block': 'block_1', 'turn': False},
+    
+    'block_3': {'station': 'ST06', 'next_block': 'block_4', 'previous_block': 'block_2', 'turn': True, 'turn_severity': 0.5},
+    'block_4': {'station': 'ST08', 'next_block': 'block_5', 'previous_block': 'block_3', 'turn': False},
+    'block_5': {'station': 'ST09', 'next_block': 'block_6', 'previous_block': 'block_4', 'turn': False},
+    
 }
 
 # Mapping from station_id to block_id
@@ -251,6 +276,7 @@ def handle_station_message(address, message):
             "sequence_number": s_mcp
         }
         send_message(station_ports[station_id], ack_command)
+        
         if station_id not in connected_stations:
             connected_stations.append(station_id)
             # Rebuild connected_stations_in_order based on track order
