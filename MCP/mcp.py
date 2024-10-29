@@ -1,448 +1,454 @@
 import socket
 import threading
+from utils import create_socket, receive_message, send_message, log_event, initialise_sequence, increment_sequence, sequence_tracker
 import time
-import logging
-from signal import signal, SIGINT
-from sys import exit
 
-clients_by_ip = {}  # Dictionary to map IP addresses to client info
-status_interval = 2  # seconds
-timeout_interval = 3  # seconds
+# Static port mapping for CCPs (Blade Runners)
+ccp_ports = {
+    'BR01': ('127.0.0.1', 3001),
+    'BR02': ('127.0.0.1', 3002),
+    'BR03': ('127.0.0.1', 3003),
+    'BR04': ('127.0.0.1', 3004),
+    'BR05': ('127.0.0.1', 3005)
+}
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Static port mapping for 10 stations
+station_ports = {
+    'ST01': ('127.0.0.1', 4001),
+    'ST02': ('127.0.0.1', 4002),
+    'ST03': ('127.0.0.1', 4003),
+    'ST04': ('127.0.0.1', 4004),
+    'ST05': ('127.0.0.1', 4005),
+    'ST06': ('127.0.0.1', 4006),
+    'ST07': ('127.0.0.1', 4007),
+    'ST08': ('127.0.0.1', 4008),
+    'ST09': ('127.0.0.1', 4009),
+    'ST10': ('127.0.0.1', 4010)
+}
 
-def handle_ccp_connection(conn, addr):
-    logging.info(f"Connected to CCP at {addr}")
-    client_ip = addr[0]
+# Static port mapping for 10 checkpoints
+checkpoint_ports = {
+    'CP01': ('127.0.0.1', 5001),
+    'CP02': ('127.0.0.1', 5002),
+    'CP03': ('127.0.0.1', 5003),
+    'CP04': ('127.0.0.1', 5004),
+    'CP05': ('127.0.0.1', 5005),
+    'CP06': ('127.0.0.1', 5006),
+    'CP07': ('127.0.0.1', 5007),
+    'CP08': ('127.0.0.1', 5008),
+    'CP09': ('127.0.0.1', 5009),
+    'CP10': ('127.0.0.1', 5010)
+}
 
-    try:
-        while True:
-            data = conn.recv(1024).decode().strip()
-            if not data:
-                logging.info(f"Connection lost with CCP at {addr}")
-                break
-            
-            logging.info(f"Received from CCP: {data}")
-            response = "UNKNOWN COMMAND\n"
+# Track map for block management, handling turns and checkpoints
+# Send the information to Station on notifying when START upon stopping after the trip thing. 
+track_map = {
+    'block_1': {'station': 'ST01', 'next_block': 'block_2', 'turn': False, 'is_checkpoint': True},
+    'block_2': {'station': 'ST02', 'next_block': 'block_3', 'turn': False, 'is_checkpoint': True},
+    'block_3': {'station': 'ST03', 'next_block': 'block_4', 'turn': True, 'turn_severity': 0.5, 'is_checkpoint': True},
+    'block_4': {'station': 'ST04', 'next_block': 'block_5', 'turn': False, 'is_checkpoint': True},
+    'block_5': {'station': 'ST05', 'next_block': 'block_6', 'turn': False, 'is_checkpoint': True},
+    'block_6': {'station': 'ST06', 'next_block': 'block_7', 'turn': True, 'turn_severity': 0.7, 'is_checkpoint': True},
+    'block_7': {'station': 'ST07', 'next_block': 'block_8', 'turn': False, 'is_checkpoint': True},
+    'block_8': {'station': 'ST08', 'next_block': 'block_9', 'turn': False, 'is_checkpoint': True},
+    'block_9': {'station': 'ST09', 'next_block': 'block_10', 'turn': False, 'is_checkpoint': True},
+    'block_10': {'station': 'ST10', 'next_block': 'block_1', 'turn': False, 'is_checkpoint': True}
+}
 
-            if data == "TRIN":
-                clients_by_ip[client_ip] = {'conn': conn, 'type': 'train', 'last_message': time.time()}
-                response = f"ACKN {client_ip}\n"
-            elif data == "STIN":
-                clients_by_ip[client_ip] = {'conn': conn, 'type': 'station', 'last_message': time.time()}
-                response = f"ACKN {client_ip}\n"
-            elif data.startswith("STAT"):
-                if client_ip in clients_by_ip:
-                    clients_by_ip[client_ip]['last_message'] = time.time()
-                    response = "STAT ACK\n"
-            elif data == "HELLO MCP":
-                response = "HELLO CCP\n"
-            elif data == "STATUS REPORT":
-                response = "STATUS OK\n"
-            elif data == "LOCATION UPDATE":
-                response = "LOCATION ACK\n"
-            else:
-                response = "UNKNOWN COMMAND\n"
+# Track occupancy to map which block is occupied by which BR
+track_occupancy = {}
 
-            conn.send(response.encode())
-    except socket.error as e:
-        logging.error(f"Socket error: {e}")
-    finally:
-        if client_ip in clients_by_ip:
-            del clients_by_ip[client_ip]  # Remove from IP map
-        conn.close()
-        logging.info(f"Connection with CCP at {addr} closed")
+# Dictionary to track heartbeat status for each CCP
+heartbeat_missed = {}
 
-def send_status():
+# Track sequence numbers for each system
+sequence_numbers = {
+    "mcp": 1000,  # Starting point for MCP sequence numbers
+    "ccp": 2000,  # Starting point for CCP sequence numbers
+    "cpc": 3000,  # Starting point for CPC sequence numbers
+    "stc": 4000   # Starting point for STC sequence numbers
+}
+
+# Start MCP server and emergency handler thread
+# def start_mcp():
+#     print("Starting MCP...")
+#     mcp_socket = create_socket(2000)  # MCP listens on port 2000
+#     print("MCP listening on port 2000")
+
+#     # Initialize MCP sequence number randomly
+#     initialise_sequence("mcp")
+#     print(f"MCP starting with initial sequence number: {sequence_tracker['mcp']}")
+
+#     # Start the emergency command thread
+#     emergency = threading.Thread(target=emergency_command_handler)
+#     emergency.daemon = True  # Ensure this thread stops when the main program exits
+#     emergency.start()
+
+#     while True:
+#         print("Waiting for messages...")
+#         message, address = receive_message(mcp_socket)
+#         print(f"Message received from {address}")
+#         handle_message(address, message)
+def start_mcp():
+    print("Starting MCP...")
+    mcp_socket = create_socket(2000)  # MCP listens on port 2000
+    print("MCP listening on port 2000")
+
+    # Initialize MCP sequence number randomly
+    initialise_sequence("mcp")
+    print(f"MCP starting with initial sequence number: {sequence_tracker['mcp']}")
+
     while True:
-        for client_ip, client_info in list(clients_by_ip.items()):
-            conn = client_info['conn']
-            if time.time() - client_info['last_message'] > timeout_interval:
-                logging.warning(f"Client {client_ip} is unresponsive. Removing from list.")
-                conn.close()
-                del clients_by_ip[client_ip]
-                continue
-            if client_info['type'] == 'train':
-                try:
-                    conn.send("STAT\n".encode())
-                except socket.error as e:
-                    logging.error(f"Socket error: {e}")
-                    conn.close()
-                    del clients_by_ip[client_ip]
-        time.sleep(status_interval)
+        # Alternate between asking for manual input and listening for messages
+        emergency_input = input("Enter command (e.g., 'BR01 STOPC' or 'FFASTC'): ").strip()
+        if emergency_input:
+            process_command(emergency_input)
 
-def send_command_to_ccp(ip_address, command):
-    client_info = clients_by_ip.get(ip_address)
-    if client_info:
+        # Check if there are incoming messages to handle
+        print("Waiting for messages...")
+        mcp_socket.settimeout(2)  # Use a timeout to periodically return from blocking
         try:
-            client_info['conn'].send(f"{command}\n".encode())
-            logging.info(f"Sent command '{command}' to CCP at {ip_address}")
-        except socket.error as e:
-            logging.error(f"Failed to send command to {ip_address}: {e}")
-            client_info['conn'].close()
-            del clients_by_ip[ip_address]
-    else:
-        logging.warning(f"No active CCP found at {ip_address}")
+            message, address = receive_message(mcp_socket)
+            print(f"Message received from {address}")
+            handle_message(address, message)
+        except socket.timeout:
+            # No messages received, continue the loop to check for manual commands
+            pass
 
-def start_mcp(port):
-    host = 'localhost'
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    server_socket.bind((host, port))
-    server_socket.listen(5)
-    logging.info(f"MCP started on port {port}")
 
-    try:
-        while True:
-            conn, addr = server_socket.accept()
-            threading.Thread(target=handle_ccp_connection, args=(conn, addr)).start()
-    except Exception as e:
-        logging.error(f"Error in MCP on port {port}: {e}")
-    finally:
-        server_socket.close()
-
-def command_input_listener():
+# Handle emergency commands (running in parallel)
+def emergency_command_handler():
     while True:
-        user_input = input("Enter command (format: IP COMMAND): ").strip()
-        if user_input:
-            try:
-                ip_address, command = user_input.split(maxsplit=1)
-                send_command_to_ccp(ip_address, command)
-            except ValueError:
-                logging.warning("Invalid input. Use format: IP COMMAND")
+        # Simulate emergency command handling, with target BR selection
+        emergency_input = input("Enter command (e.g., 'BR01 STOPC' or 'FFASTC'): ").strip()
+        if emergency_input:
+            process_command(emergency_input)
 
-def graceful_shutdown(signal_received, frame):
-    logging.info('SIGINT or CTRL-C detected. Shutting down gracefully...')
-    for client_ip, client_info in clients_by_ip.items():
-        client_info['conn'].close()
-    logging.info('All connections closed.')
-    exit(0)
+        time.sleep(1)
+
+# Process the user input command
+def process_command(emergency_input):
+    try:
+        # Parse the input command
+        parts = emergency_input.split()
+        if len(parts) == 2:
+            target, action = parts
+            if target.upper() == 'ALL':
+                # Broadcast to all BRs
+                broadcast_command(action)
+            elif target.startswith("BR"):
+                # Send command to specific BR
+                send_command_to_br(target, action)
+            else:
+                print("Invalid target. Use 'BR01' or 'ALL'.")
+        else:
+            print("Invalid input format. Use 'BR01 START' or 'ALL STOP'.")
+    except Exception as e:
+        print(f"Error processing command: {e}")
+
+# Broadcast a command to all CCPs
+def broadcast_command(id, action):
+    command = {"client_type": "mcp", "message": "EXEC", "action": action.upper(), "sequence_number": increment_sequence("mcp")}
+    for ccp_id, address in ccp_ports.items():
+        send_message(address, command)
+    print(f"Broadcast command '{action}' sent to all CCPs.")
+
+# Send a specific command to a single BR
+def send_command_to_br(br_id, action):
+    if br_id in ccp_ports:
+        command = {"client_type": "mcp", "message": "EXEC", "action": action.upper(), "sequence_number": increment_sequence("mcp")}
+        send_message(ccp_ports[br_id], command)
+        print(f"Command '{action}' sent to {br_id}.")
+    else:
+        print(f"BR ID {br_id} not recognized.")
+
+# Send STRQ (Status Request) to all CCPs, Stations, and Checkpoints every 2 seconds
+# def send_status_requests(address, message):
+#     while True:
+#         # Send STRQ to all CCPs
+#         for ccp_id in ccp_ports:
+#             ccp_id = message['client_id']
+#             status_request = {"client_type": "ccp", "message": "STRQ", "client_id": ccp_id, "sequence_number": s_mcp}
+#             send_message(ccp_ports[ccp_id], status_request)
+#             print(f"Sent STRQ to CCP {ccp_id}")
+
+#             # Increment the missed heartbeat count if a STAT isn't received
+#             if ccp_id in heartbeat_missed:
+#                 heartbeat_missed[ccp_id] += 1
+#             else:
+#                 heartbeat_missed[ccp_id] = 1
+
+#             # If 3 consecutive heartbeats are missed, trigger an emergency
+#             if heartbeat_missed[ccp_id] > 3:
+#                 print(f"Missed 3 heartbeats from CCP {ccp_id}.")
+#                 # emergency_stop(ccp_id)
+#                 # broadcast stop to all BRs
+#                 exec_command = {"client_type": "mcp", "message": "EXEC", "client_id": "ccp_id", "sequence_number": "s_mcp", "action": "STOPC"} # BR stopped and doors closed
+#                 broadcast_command(ccp_ports[ccp_id], exec_command) # Emergency stop - all BRs halt
+#                 # disconnect specified BR
+#                 exec_command = {"client_type": "mcp", "message": "EXEC", "client_id": "ccp_id", "sequence_number": "s_mcp", "action": "DISCONNECT"}
+#                 send_command_to_br(ccp_ports[ccp_id], exec_command) # Disconnect
+#                 # CCP should send an OFLN status message
+
+#         # Send STRQ to all Stations
+#         for station_id in station_ports:
+#             station_id = message['client_id']
+#             status_request = { "client_type": "stc", "message": "STRQ", "client_id": station_id, "sequence_number": s_mcp}
+#             send_message(station_ports[station_id], status_request)
+#             print(f"Sent STRQ to Station {station_id}")
+
+#             # Increment the missed heartbeat count if a STAT isn't received
+#             if station_id in heartbeat_missed:
+#                 heartbeat_missed[station_id] += 1
+#             else:
+#                 heartbeat_missed[station_id] = 1
+
+#             # If 3 consecutive heartbeats are missed, trigger an emergency
+#             if heartbeat_missed[station_id] > 3:
+#                 print(f"Missed 3 heartbeats from Station {station_id}.")
+#                 # emergency_stop(station_id)
+
+
+#         # Send STRQ to all Checkpoints
+#         for checkpoint_id in checkpoint_ports:
+#             status_request = {"client_type": "cpc", "message": "STRQ", "client_id": checkpoint_id, "sequence_number": s_mcp}
+#             send_message(checkpoint_ports[checkpoint_id], status_request)
+#             print(f"Sent STRQ to Checkpoint {checkpoint_id}")
+
+#             # Increment the missed heartbeat count if a STAT isn't received
+#             if checkpoint_id in heartbeat_missed:
+#                 heartbeat_missed[checkpoint_id] += 1
+#             else:
+#                 heartbeat_missed[checkpoint_id] = 1
+
+#             # If 3 consecutive heartbeats are missed, trigger an emergency
+#             if heartbeat_missed[checkpoint_id] > 3:
+#                 print(f"Missed 3 heartbeats from Checkpoint {checkpoint_id}. Taking emergency action.")
+#                 # emergency_stop(checkpoint_id)
+
+#         time.sleep(2)  # Wait for 2 seconds before sending the next STRQ    
+
+# Handle incoming messages
+def handle_message(address, message):
+    if message['client_type'] == 'CCP':
+        print(f"Handling CCP message from {address}")
+        handle_ccp_message(address, message)
+    elif message['client_type'] == 'STC':
+        print(f"Handling Station message from {address}")
+        handle_station_message(address, message)
+    elif message['client_type'] == 'CPC':
+        print(f"Handling Checkpoint message from {address}")
+        handle_checkpoint_message(address, message)
+
+# Handle CCP messages
+def handle_ccp_message(address, message):
+    log_event("CCP Message Received", message)
+    ccp_id = message['client_id']
+    # s_ccp = message['sequence_number']
+    # s_mcp = s_ccp+1
+
+    if message['message'] == 'CCIN':
+        # Handle initialization: Send ACK first
+        print(f"CCP {ccp_id} initialized.")
+        ack_command = {"client_type": "mcp", "message": "AKIN", "client_id": ccp_id, "sequence_number": increment_sequence("mcp")}
+        send_message(ccp_ports[ccp_id], ack_command)  # Acknowledge initialisation
+    # Status update
+    elif message['message'] == 'STAT':
+        print(f"BR {ccp_id} STAT received.")
+        ack_command = {"client_type": "mcp", "message": "AKST", "client_id": ccp_id, "sequence_number": increment_sequence("mcp")}
+        send_message(ccp_ports[ccp_id], ack_command)  # Acknowledge status
+        if message['status'] == 'ERR':
+            exec_command = {"client_type": "mcp", "message": "EXEC", "client_id": ccp_id, "sequence_number": increment_sequence("mcp"), "action": "STOPC"}
+            # exec_command = {"client_type": "mcp", "message": "EXEC", "client_id": "ccp_id", "sequence_number": "s_mcp", "action": "STOPC"}
+            broadcast_command(ccp_ports[ccp_id], exec_command) # Emergency stop - all BRs halt
+            exec_command = {"client_type": "mcp", "message": "EXEC", "client_id": "ccp_id", "sequence_number": increment_sequence("mcp"), "action": "DISCONNECT"}
+            send_command_to_br(ccp_ports[ccp_id], exec_command) # Disconnect
+            # CCP should send an OFLN status message
+
+    # EXEC acknowledgement
+    elif message['message'] == 'AKEX':
+        print(f"BR {ccp_id} acknowledged command.")
+    
+    # Handle other status or commands if needed
+
+# Handle Station messages
+def handle_station_message(address, message):
+    log_event("Station Message Received", message)
+    station_id = message['client_id']
+
+    if message['message'] == 'STIN':
+        # Handle initialisation: Send ACK first
+        print(f"Station {station_id} initialized.")
+        ack_command = {"client_type": "mcp", "message": "AKIN", "client_id": station_id, "sequence_number": increment_sequence("mcp")}
+        send_message(station_ports[station_id], ack_command)  # Acknowledge initialisation
+    # print(f"Station message handled from {station_id}: {message}")
+    # Status update
+    elif message['message'] == 'STAT':
+        print(f"Station {station_id} STAT received.")
+        if message['status'] == 'ERR':
+            error_command = {"client_type": "stc", "message": "EXEC", "client_id": "station_id", "sequence_number": increment_sequence("mcp"), "action": "BLINK", "br_id": ""}
+            send_message(station_ports[station_id], error_command)  # BLINK
+    # EXEC acknowledgement
+    elif message['message'] == 'AKEX':
+        print(f"BR {station_id} acknowledged command.")
+    
+
+# Handle Checkpoint messages (TRIP signal)
+def handle_checkpoint_message(address, message):
+    log_event("Checkpoint Message Received", message)
+    checkpoint_id = message['client_id']
+    
+    if message['message'] == 'CPIN':
+        # Handle initialization: Send ACK first
+        print(f"Station {checkpoint_id} initialized.")
+        ack_command = {"client_type": "mcp", "message": "AKIN", "status": "RECEIVED", "sequence_number": increment_sequence("mcp")}
+        send_message(checkpoint_ports[checkpoint_id], ack_command)  # Acknowledge initialization
+    # Assuming TRIP message contains which block was tripped
+    elif message['message'] == 'TRIP':
+        tripped_block = message['block_id']
+        print(f"TRIP signal received from {checkpoint_id}, block {tripped_block}")
+        ack_command = {"client_type": "cpc", "message": "AKTR", "sequence_number": increment_sequence("mcp")}
+        send_message(checkpoint_ports[checkpoint_id], ack_command)  # Acknowledge TRIP
+
+        # Turn on LED
+        led_command = {"client_type": "cpc", "message": "EXEC", "client_id": "checkpoint_id", "sequence_number": increment_sequence("mcp"), "action": "ON"}
+        send_message(checkpoint_ports[checkpoint_id], led_command)  # Turn ON the checkpoint LED
+
+        # EXEC FSLOWC
+        # Determine which BR is in this block
+        if tripped_block in track_occupancy:
+            br_id = track_occupancy[tripped_block]
+            handle_slow(br_id)
+            notify_station_and_checkpoint(br_id, track_map[tripped_block]['station'])
+            stop_br_at_station(br_id, track_map[tripped_block]['station'])
+    # Status update
+    elif message['message'] == 'STAT':
+        print(f"Checkpoint {checkpoint_id} STAT received.")
+        if message['status'] == 'ERR':
+            error_command = {"client_type": "cpc", "message": "EXEC", "client_id": "checkpoint_id", "sequence_number": increment_sequence("mcp"), "action": "BLINK"}
+            send_message(checkpoint_ports[checkpoint_id], error_command)
+    # EXEC acknowledgement
+    elif message['message'] == 'AKEX':
+        print(f"BR {checkpoint_id} acknowledged command.")
+## handle message without block_id
+# def handle_checkpoint_message(address, message):
+#     log_event("Checkpoint Message Received", message)
+#     checkpoint_id = message.get('client_id')
+#     print(f"Processing message for checkpoint: {checkpoint_id}, content: {message}")
+    
+#     if message.get('message') == 'CPIN':
+#         print(f"Checkpoint {checkpoint_id} initialized.")
+#         ack_command = {"client_type": "mcp", "message": "AKIN", "status": "RECEIVED", "sequence_number": increment_sequence("mcp")}
+#         if checkpoint_id in checkpoint_ports:
+#             send_message(checkpoint_ports[checkpoint_id], ack_command)
+#             print(f"Initialization ACK sent to {checkpoint_id}")
+#         else:
+#             print(f"Error: No mapping found for {checkpoint_id}")
+    
+#     elif message.get('message') == 'TRIP':
+#         # Temporarily skip the need for block_id
+#         print(f"TRIP signal received from {checkpoint_id}")
+#         ack_command = {"client_type": "cpc", "message": "AKTR", "sequence_number": increment_sequence("mcp")}
+#         if checkpoint_id in checkpoint_ports:
+#             send_message(checkpoint_ports[checkpoint_id], ack_command)
+#             print(f"TRIP ACK sent to {checkpoint_id}")
+        
+#         # Execute LED command to turn it on as a test
+#         led_command = {"client_type": "cpc", "message": "EXEC", "client_id": checkpoint_id, "sequence_number": increment_sequence("mcp"), "action": "ON"}
+#         send_message(checkpoint_ports[checkpoint_id], led_command)
+#         print(f"Sent LED ON command to {checkpoint_id}")
+
+#         # Temporarily skip the need to find track occupancy
+#         print(f"Simulated actions for BR related to checkpoint {checkpoint_id}")
+
+#     # Handle other messages as needed
+
+
+# Handle BR stops at stations and notify checkpoint/station of arrival
+def stop_br_at_station(br_id, station_id):
+    stop_command = {"client_type": "mcp", "message": "EXEC", "sequence_number": increment_sequence("mcp"), "action": "STOPO"} # BR stops and the door is opened
+    send_message(ccp_ports[br_id], stop_command)
+    print(f"BR {br_id} stopping at station {station_id}")
+    control_station_doors(station_id, "OPEN")
+    time.sleep(10)  # Wait time
+    control_station_doors(station_id, "CLOSE")
+    
+    broadcast_start()
+    for checkpoint_id in checkpoint_ports:
+
+        off_command = {"client_type": "cpc", "message": "EXEC", "client_id": "checkpoint_id", "sequence_number": increment_sequence("mcp"), "action": "OFF"}
+        send_message(checkpoint_ports[checkpoint_id], off_command)  # Turn OFF the checkpoint LED
+        print(f"Sent OFF command to checkpoint {checkpoint_id}")
+
+# Notify both checkpoint and station about BR's arrival
+def notify_station_and_checkpoint(br_id, station_id):
+    checkpoint_id = track_map[station_id].get('checkpoint_id')
+
+    if checkpoint_id:
+        notify_checkpoint_arrival(br_id, checkpoint_id)
+
+    notify_station_arrival(br_id, station_id)
+
+# Notify the checkpoint that BR is arriving
+def notify_checkpoint_arrival(br_id, checkpoint_id):
+    arrival_message = {"client_type": "mcp", "message": "BRARRIVE", "client_id": checkpoint_id, "br_id": br_id}
+    send_message(checkpoint_ports[checkpoint_id], arrival_message)
+    # Turn on LED at checkpoint
+    led_command = {"client_type": "mcp", "message": "EXEC", "client_id": checkpoint_id, "action": "ON"}
+    send_message(checkpoint_ports[checkpoint_id], led_command)
+    print(f"Notified checkpoint {checkpoint_id} about BR {br_id} arrival.")
+
+# Notify the station that BR is arriving
+def notify_station_arrival(br_id, station_id):
+    arrival_message = {"client_type": "mcp", "message": "STNARRIVE", "client_id": station_id, "br_id": br_id}
+    send_message(station_ports[station_id], arrival_message)
+    print(f"Notified station {station_id} about BR {br_id} arrival.")
+
+# Control station doors
+def control_station_doors(station_id, action):
+    door_command = {"client_type": "mcp", "message": "DOOR", "sequence_number": increment_sequence("mcp"), "action": action}
+    send_message(station_ports[station_id], door_command)
+
+# Handle SLOW command for BRs before stopping
+def handle_slow(br_id):
+    slow_command = {"client_type": "mcp", "message": "EXEC", "sequence_number": increment_sequence("mcp"), "action": "FSLOWC"} #BR moves forward slowly and the door is closed
+    send_message(ccp_ports[br_id], slow_command)
+    print(f"FSLOWC command sent to {br_id}.")
+
+# Broadcast START command to all BRs to continue to the next station
+def broadcast_start():
+    start_command = {"client_type": "mcp", "message": "EXEC", "sequence_number": increment_sequence("mcp"), "action": "FFASTC"} # BR moves forward, fast, door is closed
+    for ccp_id, address in ccp_ports.items():
+        send_message(address, start_command)
+    print(f"START command broadcasted to all CCPs.")
+
+def reset_system():
+    global track_occupancy, heartbeat_missed, sequence_tracker
+    track_occupancy = {}
+    heartbeat_missed = {}
+    
+    # Reset sequence tracker for MCP
+    for key in sequence_tracker:
+        sequence_tracker[key] = 0
+
+    # Broadcast reset command to all CCPs, Stations, and Checkpoints
+    broadcast_reset_command()
+
+    print("System has been reset.")
+
+def broadcast_reset_command():
+    reset_command = {"client_type": "mcp", "message": "RESET"}
+    # Send to all CCPs
+    for ccp_id, address in ccp_ports.items():
+        send_message(address, reset_command)
+    # Send to all Stations
+    for station_id, address in station_ports.items():
+        send_message(address, reset_command)
+    # Send to all Checkpoints
+    for checkpoint_id, address in checkpoint_ports.items():
+        send_message(address, reset_command)
+
+    print("Broadcast reset command sent to all components.")
 
 if __name__ == "__main__":
-    signal(SIGINT, graceful_shutdown)
-    
-    port = 52002  # Single port for all connections
-    threading.Thread(target=start_mcp, args=(port,)).start()
-
-    threading.Thread(target=send_status).start()
-    threading.Thread(target=command_input_listener).start()  # Start listening for manual commands
-
-# import socket
-# import threading
-# import time
-# import logging
-# from signal import signal, SIGINT
-# from sys import exit
-
-# clients_by_ip = {}  # Dictionary to map IP addresses to client info
-# status_interval = 2  # seconds
-# timeout_interval = 3  # seconds
-
-# # Configure logging
-# logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-# def handle_ccp_connection(conn, addr):
-#     logging.info(f"Connected to CCP at {addr}")
-#     client_ip = addr[0]
-
-#     try:
-#         while True:
-#             data = conn.recv(1024).decode().strip()
-#             if not data:
-#                 logging.info(f"Connection lost with CCP at {addr}")
-#                 break
-            
-#             logging.info(f"Received from CCP: {data}")
-#             response = "UNKNOWN COMMAND\n"
-
-#             if data == "TRIN":
-#                 clients_by_ip[client_ip] = {'conn': conn, 'type': 'train', 'last_message': time.time()}
-#                 response = f"ACKN {client_ip}\n"
-#             elif data == "STIN":
-#                 clients_by_ip[client_ip] = {'conn': conn, 'type': 'station', 'last_message': time.time()}
-#                 response = f"ACKN {client_ip}\n"
-#             elif data.startswith("STAT"):
-#                 if client_ip in clients_by_ip:
-#                     clients_by_ip[client_ip]['last_message'] = time.time()
-#                     response = "STAT ACK\n"
-#             elif data == "HELLO MCP":
-#                 response = "HELLO CCP\n"
-#             elif data == "STATUS REPORT":
-#                 response = "STATUS OK\n"
-#             elif data == "LOCATION UPDATE":
-#                 response = "LOCATION ACK\n"
-#             else:
-#                 response = "UNKNOWN COMMAND\n"
-
-#             conn.send(response.encode())
-#     except socket.error as e:
-#         logging.error(f"Socket error: {e}")
-#     finally:
-#         if client_ip in clients_by_ip:
-#             del clients_by_ip[client_ip]  # Remove from IP map
-#         conn.close()
-#         logging.info(f"Connection with CCP at {addr} closed")
-
-# def send_status():
-#     while True:
-#         for client_ip, client_info in list(clients_by_ip.items()):
-#             conn = client_info['conn']
-#             if time.time() - client_info['last_message'] > timeout_interval:
-#                 logging.warning(f"Client {client_ip} is unresponsive. Removing from list.")
-#                 conn.close()
-#                 del clients_by_ip[client_ip]
-#                 continue
-#             if client_info['type'] == 'train':
-#                 try:
-#                     conn.send("STAT\n".encode())
-#                 except socket.error as e:
-#                     logging.error(f"Socket error: {e}")
-#                     conn.close()
-#                     del clients_by_ip[client_ip]
-#         time.sleep(status_interval)
-
-# def send_command_to_ccp(ip_address, command):
-#     client_info = clients_by_ip.get(ip_address)
-#     if client_info:
-#         try:
-#             client_info['conn'].send(f"{command}\n".encode())
-#             logging.info(f"Sent command '{command}' to CCP at {ip_address}")
-#         except socket.error as e:
-#             logging.error(f"Failed to send command to {ip_address}: {e}")
-#             client_info['conn'].close()
-#             del clients_by_ip[ip_address]
-#     else:
-#         logging.warning(f"No active CCP found at {ip_address}")
-
-# def start_mcp(port):
-#     host = 'localhost'
-#     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-#     server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-#     server_socket.bind((host, port))
-#     server_socket.listen(5)
-#     logging.info(f"MCP started on port {port}")
-
-#     try:
-#         while True:
-#             conn, addr = server_socket.accept()
-#             threading.Thread(target=handle_ccp_connection, args=(conn, addr)).start()
-#     except Exception as e:
-#         logging.error(f"Error in MCP on port {port}: {e}")
-#     finally:
-#         server_socket.close()
-
-# def command_input_listener():
-#     while True:
-#         user_input = input("Enter command (format: IP COMMAND): ").strip()
-#         if user_input:
-#             try:
-#                 ip_address, command = user_input.split(maxsplit=1)
-#                 send_command_to_ccp(ip_address, command)
-#             except ValueError:
-#                 logging.warning("Invalid input. Use format: IP COMMAND")
-
-# def graceful_shutdown(signal_received, frame):
-#     logging.info('SIGINT or CTRL-C detected. Shutting down gracefully...')
-#     for client_ip, client_info in clients_by_ip.items():
-#         client_info['conn'].close()
-#     logging.info('All connections closed.')
-#     exit(0)
-
-# if __name__ == "__main__":
-#     signal(SIGINT, graceful_shutdown)
-    
-#     port = 52002  # Single port for all connections
-#     threading.Thread(target=start_mcp, args=(port,)).start()
-
-#     threading.Thread(target=send_status).start()
-#     threading.Thread(target=command_input_listener).start()  # Start listening for manual commands
-
-# import socket
-# import threading
-# import time
-
-# clients = {}
-# client_id_counter = 0
-# status_interval = 2  # seconds
-# timeout_interval = 3  # seconds
-
-# def assign_id():
-#     global client_id_counter
-#     client_id_counter += 1
-#     return client_id_counter
-
-# def handle_ccp_connection(conn, addr):
-#     print(f"Connected to CCP at {addr}")
-#     client_id = None
-
-#     while True:
-#         try:
-#             data = conn.recv(1024).decode().strip()
-#             if not data:
-#                 print(f"Connection lost with CCP at {addr}")
-#                 conn.close()
-#                 if client_id in clients:
-#                     del clients[client_id]
-#                 return
-            
-#             print(f"Received from CCP: {data}")
-#             response = "UNKNOWN COMMAND\n"
-
-#             if data == "TRIN":
-#                 client_id = assign_id()
-#                 clients[client_id] = {'conn': conn, 'type': 'train', 'last_message': time.time()}
-#                 response = f"ACKN {client_id}\n"
-#             elif data == "STIN":
-#                 client_id = assign_id()
-#                 clients[client_id] = {'conn': conn, 'type': 'station', 'last_message': time.time()}
-#                 response = f"ACKN {client_id}\n"
-#             elif data.startswith("STAT"):
-#                 if client_id:
-#                     clients[client_id]['last_message'] = time.time()
-#                     response = "STAT ACK\n"
-#             elif data == "HELLO MCP":
-#                 response = "HELLO CCP\n"
-#             elif data == "STATUS REPORT":
-#                 response = "STATUS OK\n"
-#             elif data == "LOCATION UPDATE":
-#                 response = "LOCATION ACK\n"
-#             else:
-#                 response = "UNKNOWN COMMAND\n"
-
-#             conn.send(response.encode())
-#         except socket.error as e:
-#             print(f"Socket error: {e}")
-#             conn.close()
-#             if client_id in clients:
-#                 del clients[client_id]
-#             return
-
-# def send_status():
-#     while True:
-#         for client_id, client_info in list(clients.items()):
-#             conn = client_info['conn']
-#             if time.time() - client_info['last_message'] > timeout_interval:
-#                 print(f"Client {client_id} is unresponsive. Removing from list.")
-#                 conn.close()
-#                 del clients[client_id]
-#                 continue
-#             if client_info['type'] == 'train':
-#                 try:
-#                     conn.send("STAT\n".encode())
-#                 except socket.error as e:
-#                     print(f"Socket error: {e}")
-#                     conn.close()
-#                     del clients[client_id]
-#         time.sleep(status_interval)
-
-# def start_mcp(port):
-#     host = 'localhost'
-#     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-#     server_socket.bind((host, port))
-#     server_socket.listen(5)
-#     print(f"MCP started on port {port}")
-
-#     while True:
-#         conn, addr = server_socket.accept()
-#         threading.Thread(target=handle_ccp_connection, args=(conn, addr)).start()
-
-# if __name__ == "__main__":
-#     ports = [52002, 52003, 52004, 52005, 52006, 52007, 52008, 52009]  # Expanded list of ports
-#     for port in ports:
-#         threading.Thread(target=start_mcp, args=(port,)).start()
-
-#     threading.Thread(target=send_status).start()
-
-
-# import socket
-# import threading
-
-# def handle_ccp_connection(conn, addr):
-#     print(f"Connected to CCP at {addr}")
-#     while True:
-#         data = conn.recv(1024).decode()
-#         if not data:
-#             break
-#         print(f"Received from CCP: {data}")
-        
-#         # Process received data and send appropriate response
-#         if data == "HELLO MCP":
-#             response = "HELLO CCP"
-#         elif data == "STATUS REPORT":
-#             # Dummy status report for example
-#             response = "STATUS OK"
-#         elif data == "LOCATION UPDATE":
-#             # Dummy location update for example
-#             response = "LOCATION ACK"
-#         else:
-#             response = "UNKNOWN COMMAND"
-        
-#         conn.send(response.encode())
-#     conn.close()
-
-# def start_mcp(port):
-#     host = 'localhost'
-#     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-#     server_socket.bind((host, port))
-#     server_socket.listen(5)
-#     print(f"MCP started on port {port}")
-
-#     while True:
-#         conn, addr = server_socket.accept()
-#         threading.Thread(target=handle_ccp_connection, args=(conn, addr)).start()
-
-# if __name__ == "__main__":
-#     ports = [52002, 52003, 52004, 52005]  # List of ports to listen on
-#     for port in ports:
-#         threading.Thread(target=start_mcp, args=(port,)).start()
-
-
-
-
-
-
-# import socket
-# import threading
-# import time
-
-# def handle_ccp_connection(conn, addr):
-#     print(f"Connected to CCP at {addr}")
-#     conn.send("HELLO MCP".encode())
-#     while True:
-#         data = conn.recv(1024).decode()
-#         if not data:
-#             print(f"Connection lost with CCP at {addr}")
-#             conn.close()
-#             return
-        
-#         print(f"Received from CCP: {data}")
-        
-#         # Process received data and send appropriate response
-#         if data == "HELLO MCP":
-#             response = "HELLO CCP"
-#         elif data == "STATUS REPORT":
-#             # Dummy status report for example
-#             response = "STATUS OK"
-#         elif data == "LOCATION UPDATE":
-#             # Dummy location update for example
-#             response = "LOCATION ACK"
-#         else:
-#             response = "UNKNOWN COMMAND"
-        
-#         conn.send(response.encode())
-
-# def start_mcp():
-#     host = 'localhost'
-#     port = 52002
-#     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-#     server_socket.bind((host, port))
-#     server_socket.listen(5)
-#     print(f"MCP started on port {port}")
-
-#     while True:
-#         conn, addr = server_socket.accept()
-#         threading.Thread(target=handle_ccp_connection, args=(conn, addr)).start()
-
-# if __name__ == "__main__":
-#     start_mcp()
+    start_mcp()
