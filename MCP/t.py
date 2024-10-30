@@ -41,12 +41,12 @@ ccp_ports = {
 }
 
 station_ports = {
-    'ST01': ('10.20.30.201', 4001),
-    'ST02': ('10.20.30.202', 4002),
-    'ST03': ('10.20.30.203', 4003),
-    'ST04': ('10.20.30.204', 4004),
-    'ST05': ('10.20.30.205', 4005),
-    'ST06': ('10.20.30.206', 4006),
+    'ST01': ('127.0.0.1', 4001),
+    'ST02': ('127.0.0.1', 4002),
+    'ST03': ('127.0.0.1', 4003),
+    'ST04': ('127.0.0.1', 4004),
+    'ST05': ('127.0.0.1', 4005),
+    'ST06': ('127.0.0.1', 4006),
     'ST07': ('10.20.30.207', 4007),
     'ST08': ('10.20.30.208', 4008),
     'ST09': ('10.20.30.209', 4009),
@@ -55,18 +55,18 @@ station_ports = {
 
 # Track map with both next and previous blocks for clockwise and anti-clockwise navigation
 track_map = {
-    'block_1': {'station': 'ST02', 'next_block': 'block_2', 'previous_block': 'block_5', 'turn': False},
-    'block_2': {'station': 'ST05', 'next_block': 'block_3', 'previous_block': 'block_1', 'turn': False},
-    'block_3': {'station': 'ST06', 'next_block': 'block_4', 'previous_block': 'block_2', 'turn': True, 'turn_severity': 0.5},
-    'block_4': {'station': 'ST08', 'next_block': 'block_5', 'previous_block': 'block_3', 'turn': False},
-    'block_5': {'station': 'ST09', 'next_block': 'block_1', 'previous_block': 'block_4', 'turn': False},
+    'block_1': {'station': 'ST01', 'next_block': 'block_2', 'previous_block': 'block_5', 'turn': False},
+    'block_2': {'station': 'ST03', 'next_block': 'block_3', 'previous_block': 'block_1', 'turn': False},
+    'block_3': {'station': 'ST04', 'next_block': 'block_4', 'previous_block': 'block_2', 'turn': True, 'turn_severity': 0.5},
+    'block_4': {'station': 'ST05', 'next_block': 'block_5', 'previous_block': 'block_3', 'turn': False},
+    'block_5': {'station': 'ST02', 'next_block': 'block_1', 'previous_block': 'block_4', 'turn': False},
 }
 
 # Mapping from station_id to block_id
 station_to_block = {block_info['station']: block_id for block_id, block_info in track_map.items()}
 
 # Ordered list of all stations in track order
-stations_in_order = ['ST01', 'ST02', 'ST03', 'ST04', 'ST05', 'ST06', 'ST07', 'ST08', 'ST09', 'ST10']
+stations_in_order = ['ST01', 'ST02', 'ST03', 'ST04', 'ST05']
 
 # Sequence numbers per client and per direction
 sequence_numbers = {
@@ -92,6 +92,12 @@ override_triggered = False  # Flag to indicate if override has been triggered
 
 # Dictionary to store current positions of BRs (Key: br_id, Value: station_id)
 br_map = {}
+
+# Set to keep track of occupied stations
+occupied_stations = set()
+
+# Dictionary to track missed heartbeats for each BR
+missed_heartbeats = {}
 
 # Start MCP server and emergency handler thread
 def start_mcp():
@@ -206,6 +212,9 @@ def handle_ccp_message(address, message):
     sequence_numbers[(ccp_id, 'MCP')] = s_ccp
     s_mcp = increment_sequence_number('MCP', ccp_id)
 
+    # Reset missed heartbeats count on any message from CCP
+    missed_heartbeats[ccp_id] = 0
+
     if message['message'] == 'CCIN':
         # Handle initialization: Send AKIN
         print(f"CCP {ccp_id} initialized.")
@@ -288,16 +297,25 @@ def handle_station_message(address, message):
 
         if current_startup_br is not None:
             # Handle TRIP message during startup
-            br_map[current_startup_br] = station_id  # Store the current station for the BR
-            print(f"BR {current_startup_br} is at Station {station_id}")
-            print_current_positions()
-            # Proceed to next BR in startup queue
-            current_startup_br = None
-            process_next_startup_br()
+            if station_id in occupied_stations:
+                print(f"Station {station_id} is already occupied during startup.")
+            else:
+                br_map[current_startup_br] = station_id  # Store the current station for the BR
+                occupied_stations.add(station_id)
+                print(f"BR {current_startup_br} initial position is at Station {station_id}")
+                print_current_positions()
+                # Proceed to next BR in startup queue
+                current_startup_br = None
+                process_next_startup_br()
         else:
             # Handle TRIP message during normal operations
             if station_id not in connected_stations_in_order:
                 print(f"Station {station_id} is not in connected stations.")
+                return
+
+            # Check if the station is occupied
+            if station_id in occupied_stations:
+                print(f"Station {station_id} is currently occupied.")
                 return
 
             index = connected_stations_in_order.index(station_id)
@@ -309,6 +327,8 @@ def handle_station_message(address, message):
                 if current_station == previous_station:
                     # Update the BR's position to the current station
                     br_map[br_id] = station_id
+                    occupied_stations.add(station_id)
+                    occupied_stations.discard(current_station)
                     print(f"BR {br_id} arrived at Station {station_id}")
                     print_current_positions()
 
@@ -368,6 +388,10 @@ def handle_departure(station_id, br_id):
 
     # Send command to BR to stop and close doors (ensure doors are closed)
     send_command_to_br(br_id, "STOPC")
+
+    # Clear the station occupancy
+    occupied_stations.discard(station_id)
+    print(f"Station {station_id} is now free.")
 
     # Send movement command to the BR to proceed to the next station
     action = determine_action_for_br(br_id)
@@ -469,6 +493,11 @@ def heartbeat_handler():
     while True:
         for br_id in connected_brs:
             send_status_request_to_br(br_id)
+            # Check for missed heartbeats
+            missed_heartbeats[br_id] = missed_heartbeats.get(br_id, 0) + 1
+            if missed_heartbeats[br_id] > 3:
+                print(f"Missed more than 3 heartbeats from {br_id}. Initiating emergency stop.")
+                broadcast_command("STOPC")
         time.sleep(2)
 
 def send_status_request_to_br(br_id):
