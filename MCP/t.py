@@ -6,8 +6,8 @@ import time
 
 # Static port mapping for CCPs (Blade Runners)
 ccp_ports = {
-    'BR01': ('10.20.30.101', 3001),
-    'BR02': ('10.20.30.102', 3002),
+    'BR01': ('127.0.0.1', 3001),
+    'BR02': ('127.0.0.1', 3002),
     'BR03': ('10.20.30.103', 3003),
     'BR04': ('10.20.30.104', 3004),
     'BR05': ('10.20.30.105', 3005),
@@ -18,7 +18,7 @@ ccp_ports = {
     'BR10': ('10.20.30.110', 3010),
     'BR11': ('10.20.30.111', 3011),
     'BR12': ('10.20.30.112', 3012),
-    'BR13': ('10.', 3013),
+    'BR13': ('10.20.30.113', 3013),
     'BR14': ('10.20.30.114', 3014),
     'BR15': ('10.20.30.115', 3015),
     'BR16': ('10.20.30.116', 3016),
@@ -40,7 +40,6 @@ ccp_ports = {
     'BR32': ('10.20.30.132', 3032),
 }
 
-
 station_ports = {
     'ST01': ('10.20.30.201', 4001),
     'ST02': ('10.20.30.202', 4002),
@@ -51,20 +50,16 @@ station_ports = {
     'ST07': ('10.20.30.207', 4007),
     'ST08': ('10.20.30.208', 4008),
     'ST09': ('10.20.30.209', 4009),
-    'ST10': ('10.20.30.210', 4010)
+    'ST10': ('10.20.30.210', 4010),
 }
-
 
 # Track map with both next and previous blocks for clockwise and anti-clockwise navigation
 track_map = {
     'block_1': {'station': 'ST02', 'next_block': 'block_2', 'previous_block': 'block_5', 'turn': False},
-    
     'block_2': {'station': 'ST05', 'next_block': 'block_3', 'previous_block': 'block_1', 'turn': False},
-    
     'block_3': {'station': 'ST06', 'next_block': 'block_4', 'previous_block': 'block_2', 'turn': True, 'turn_severity': 0.5},
     'block_4': {'station': 'ST08', 'next_block': 'block_5', 'previous_block': 'block_3', 'turn': False},
-    'block_5': {'station': 'ST09', 'next_block': 'block_6', 'previous_block': 'block_4', 'turn': False},
-    
+    'block_5': {'station': 'ST09', 'next_block': 'block_1', 'previous_block': 'block_4', 'turn': False},
 }
 
 # Mapping from station_id to block_id
@@ -105,9 +100,14 @@ def start_mcp():
     print("MCP listening on port 2000")
 
     # Start the emergency command thread
-    emergency = threading.Thread(target=emergency_command_handler)
-    emergency.daemon = True  # Ensure this thread stops when the main program exits
-    emergency.start()
+    emergency_thread = threading.Thread(target=emergency_command_handler)
+    emergency_thread.daemon = True  # Ensure the thread exits when the main program exits
+    emergency_thread.start()
+
+    # Start the heartbeat thread
+    heartbeat_thread = threading.Thread(target=heartbeat_handler)
+    heartbeat_thread.daemon = True
+    heartbeat_thread.start()
 
     while True:
         print("Waiting for messages...")
@@ -152,15 +152,7 @@ def process_command(emergency_input):
 # Broadcast a command to all connected CCPs
 def broadcast_command(action):
     for ccp_id in connected_brs:
-        s_mcp = increment_sequence_number('MCP', ccp_id)
-        command = {
-            "client_type": "CCP",  # Set to recipient's client_type
-            "message": "EXEC",
-            "client_id": ccp_id,
-            "sequence_number": s_mcp,
-            "action": action.upper()
-        }
-        send_message(ccp_ports[ccp_id], command)
+        send_command_to_br(ccp_id, action)
     print(f"Broadcast command '{action}' sent to all connected BRs.")
 
 # Send a specific command to a single BR
@@ -168,7 +160,7 @@ def send_command_to_br(br_id, action):
     if br_id in connected_brs:
         s_mcp = increment_sequence_number('MCP', br_id)
         command = {
-            "client_type": "CCP",  # Recipient's client_type
+            "client_type": "CCP",
             "message": "EXEC",
             "client_id": br_id,
             "sequence_number": s_mcp,
@@ -218,7 +210,7 @@ def handle_ccp_message(address, message):
         # Handle initialization: Send AKIN
         print(f"CCP {ccp_id} initialized.")
         ack_command = {
-            "client_type": "CCP",  # Recipient's client_type
+            "client_type": "CCP",
             "message": "AKIN",
             "client_id": ccp_id,
             "sequence_number": s_mcp
@@ -276,7 +268,7 @@ def handle_station_message(address, message):
             "sequence_number": s_mcp
         }
         send_message(station_ports[station_id], ack_command)
-        
+
         if station_id not in connected_stations:
             connected_stations.append(station_id)
             # Rebuild connected_stations_in_order based on track order
@@ -303,7 +295,7 @@ def handle_station_message(address, message):
             current_startup_br = None
             process_next_startup_br()
         else:
-            # Handle TRIP message during normal operations -Sending a copy of door to BR as well 
+            # Handle TRIP message during normal operations
             if station_id not in connected_stations_in_order:
                 print(f"Station {station_id} is not in connected stations.")
                 return
@@ -320,23 +312,14 @@ def handle_station_message(address, message):
                     print(f"BR {br_id} arrived at Station {station_id}")
                     print_current_positions()
 
-                    # Send commands to BR as well 
-                    slow_command = {
-                        "client_type": "CCP",
-                        "message": "EXEC",
-                        "client_id": br_id,
-                        "sequence_number": s_mcp,
-                        "action": 'FSLOWC'  # Action based on track conditions
-                    }
-                    send_message(ccp_ports[br_id], slow_command)
-
-                    send_command_to_br()
+                    # Send command to BR to stop and open doors
+                    send_command_to_br(br_id, "STOPO")
 
                     # Send door open and light on commands to the station
                     send_command_to_station(station_id, "OPEN", "DOOR", br_id)
                     send_command_to_station(station_id, "ON", "EXEC", br_id)
 
-                    # After 6 seconds, send door close and light off commands, and send FSLOWC to BR
+                    # After 6 seconds, handle departure
                     threading.Timer(6.0, handle_departure, args=(station_id, br_id)).start()
 
                     br_found = True
@@ -355,7 +338,6 @@ def handle_station_message(address, message):
         }
         send_message(station_ports[station_id], ack_command)
 
-        
         if message.get('status') == 'ERR':
             error_command = {
                 "client_type": "STC",
@@ -366,7 +348,6 @@ def handle_station_message(address, message):
                 "br_id": ""
             }
             send_message(station_ports[station_id], error_command)
-
 
     elif message_type == 'AKEX':
         print(f"Station {station_id} acknowledged command.")
@@ -385,7 +366,10 @@ def handle_departure(station_id, br_id):
     send_command_to_station(station_id, "CLOSE", "DOOR", br_id)
     send_command_to_station(station_id, "OFF", "EXEC", br_id)
 
-    # Send FSLOWC command to the BR to proceed to the next station
+    # Send command to BR to stop and close doors (ensure doors are closed)
+    send_command_to_br(br_id, "STOPC")
+
+    # Send movement command to the BR to proceed to the next station
     action = determine_action_for_br(br_id)
     send_command_to_br(br_id, action)
 
@@ -475,19 +459,28 @@ def start_normal_operations():
 # Broadcast START command to all BRs to continue to the next station
 def broadcast_start():
     for br_id in br_map.keys():
-        s_mcp = increment_sequence_number('MCP', br_id)
         action = determine_action_for_br(br_id)
-        start_command = {
-            "client_type": "CCP",
-            "message": "EXEC",
-            "client_id": br_id,
-            "sequence_number": s_mcp,
-            "action": action  # Action based on track conditions
-        }
-        send_message(ccp_ports[br_id], start_command)
+        send_command_to_br(br_id, action)
         print(f"Sent '{action}' command to {br_id}")
-    print(f"START command broadcasted to all positioned BRs.")
+    print("START command broadcasted to all positioned BRs.")
+
+# Heartbeat handler to send STRQ to connected BRs every 2 seconds
+def heartbeat_handler():
+    while True:
+        for br_id in connected_brs:
+            send_status_request_to_br(br_id)
+        time.sleep(2)
+
+def send_status_request_to_br(br_id):
+    s_mcp = increment_sequence_number('MCP', br_id)
+    command = {
+        "client_type": "CCP",
+        "message": "STRQ",
+        "client_id": br_id,
+        "sequence_number": s_mcp
+    }
+    send_message(ccp_ports[br_id], command)
+    print(f"Sent STRQ to {br_id}")
 
 if __name__ == "__main__":
     start_mcp()
-

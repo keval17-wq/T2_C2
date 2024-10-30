@@ -18,7 +18,7 @@ ccp_ports = {
     'BR10': ('10.20.30.110', 3010),
     'BR11': ('10.20.30.111', 3011),
     'BR12': ('10.20.30.112', 3012),
-    'BR13': ('10.', 3013),
+    'BR13': ('10.20.30.113', 3013),
     'BR14': ('10.20.30.114', 3014),
     'BR15': ('10.20.30.115', 3015),
     'BR16': ('10.20.30.116', 3016),
@@ -42,16 +42,16 @@ ccp_ports = {
 
 
 station_ports = {
-    'ST01': ('10.20.30.201', 4001),
-    'ST02': ('10.20.30.202', 4002),
-    'ST03': ('10.20.30.203', 4003),
-    'ST04': ('10.20.30.204', 4004),
-    'ST05': ('10.20.30.205', 4005),
-    'ST06': ('10.20.30.206', 4006),
-    'ST07': ('10.20.30.207', 4007),
-    'ST08': ('10.20.30.208', 4008),
-    'ST09': ('10.20.30.209', 4009),
-    'ST10': ('10.20.30.210', 4010)
+    'ST01': ('10.20.30.51', 5001),
+    'ST02': ('10.20.30.52', 5002),
+    'ST03': ('10.20.30.53', 5003),
+    'ST04': ('10.20.30.54', 5004),
+    'ST05': ('10.20.30.55', 5005),
+    'ST06': ('10.20.30.56', 5006),
+    'ST07': ('10.20.30.57', 5007),
+    'ST08': ('10.20.30.58', 5008),
+    'ST09': ('10.20.30.59', 5009),
+    'ST10': ('10.20.30.60', 5010)
 }
 
 
@@ -276,7 +276,6 @@ def handle_station_message(address, message):
             "sequence_number": s_mcp
         }
         send_message(station_ports[station_id], ack_command)
-        
         if station_id not in connected_stations:
             connected_stations.append(station_id)
             # Rebuild connected_stations_in_order based on track order
@@ -303,7 +302,7 @@ def handle_station_message(address, message):
             current_startup_br = None
             process_next_startup_br()
         else:
-            # Handle TRIP message during normal operations -Sending a copy of door to BR as well 
+            # Handle TRIP message during normal operations
             if station_id not in connected_stations_in_order:
                 print(f"Station {station_id} is not in connected stations.")
                 return
@@ -330,8 +329,6 @@ def handle_station_message(address, message):
                     }
                     send_message(ccp_ports[br_id], slow_command)
 
-                    send_command_to_br()
-
                     # Send door open and light on commands to the station
                     send_command_to_station(station_id, "OPEN", "DOOR", br_id)
                     send_command_to_station(station_id, "ON", "EXEC", br_id)
@@ -354,8 +351,6 @@ def handle_station_message(address, message):
             "sequence_number": s_mcp
         }
         send_message(station_ports[station_id], ack_command)
-
-        
         if message.get('status') == 'ERR':
             error_command = {
                 "client_type": "STC",
@@ -366,8 +361,6 @@ def handle_station_message(address, message):
                 "br_id": ""
             }
             send_message(station_ports[station_id], error_command)
-
-
     elif message_type == 'AKEX':
         print(f"Station {station_id} acknowledged command.")
     else:
