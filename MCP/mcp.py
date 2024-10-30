@@ -78,6 +78,9 @@ sequence_numbers = {
     # Key: (sender, receiver), Value: sequence_number
 }
 
+# Dictionary to track heartbeat status for each CCP
+heartbeat_missed = {}
+
 def increment_sequence_number(sender, receiver):
     key = (sender, receiver)
     if key not in sequence_numbers:
@@ -104,6 +107,11 @@ def start_mcp():
     mcp_socket = create_socket(2000)  # MCP listens on port 2000
     print("MCP listening on port 2000")
 
+    # Start the heartbeat monitoring thread
+    heartbeat_thread = threading.Thread(target=heartbeat_monitoring)
+    heartbeat_thread.daemon = True
+    heartbeat_thread.start()
+
     # Start the emergency command thread
     emergency = threading.Thread(target=emergency_command_handler)
     emergency.daemon = True  # Ensure this thread stops when the main program exits
@@ -114,6 +122,50 @@ def start_mcp():
         message, address = receive_message(mcp_socket)
         handle_message(address, message)
 
+def heartbeat_monitoring():
+    while True:
+        for ccp_id in list(connected_brs):
+            s_mcp = increment_sequence_number('MCP', ccp_id)
+            status_request = {
+                "client_type": "mcp",
+                "message": "STRQ",
+                "client_id": ccp_id,
+                "sequence_number": s_mcp
+            }
+            if ccp_id in connected_brs:
+                send_message(ccp_ports[ccp_id], status_request)
+                print(f"Sent STRQ (heartbeat) to {ccp_id}")
+            else:
+                print(f"CCP {ccp_id} not found in ccp_ports.")
+
+            # Increment missed heartbeat counter
+            heartbeat_missed[ccp_id] = heartbeat_missed.get(ccp_id, 0) + 1
+
+            # If missed heartbeats >= 3, take action
+            if heartbeat_missed[ccp_id] >= 3:
+                print(f"CCP {ccp_id} missed {heartbeat_missed[ccp_id]} heartbeats. Triggering emergency stop.")
+                send_emergency_stop(ccp_id)
+        time.sleep(2)
+
+def send_emergency_stop(br_id):
+    s_mcp = increment_sequence_number('MCP', br_id)
+    emergency_command = {
+        "client_type": "CCP",
+        "message": "EXEC",
+        "client_id": br_id,
+        "sequence_number": s_mcp,
+        "action": "STOPC"
+    }
+    if br_id in ccp_ports:
+        send_message(ccp_ports[br_id], emergency_command)
+        print(f"Emergency stop sent to {br_id}")
+        
+        # Remove the CCP from initialized BRs after emergency stop
+        connected_brs.discard(br_id)
+        print(f"Removed {br_id} from connected BRs after emergency stop.")
+    else:
+        print(f"CCP {br_id} not found in ccp_ports.")
+        
 # Handle emergency commands (running in parallel)
 def emergency_command_handler():
     global override_triggered
@@ -210,6 +262,8 @@ def handle_ccp_message(address, message):
     log_event("CCP Message Received", message)
     ccp_id = message['client_id']
     s_ccp = message['sequence_number']
+    if ccp_id in heartbeat_missed:
+        heartbeat_missed[ccp_id] = 0  # Reset counter on receiving any message from the CCP
     # Store the CCP's sequence number
     sequence_numbers[(ccp_id, 'MCP')] = s_ccp
     s_mcp = increment_sequence_number('MCP', ccp_id)
@@ -482,6 +536,5 @@ def broadcast_start():
         print(f"Sent '{action}' command to {br_id}")
     print(f"START command broadcasted to all positioned BRs.")
 
-if __name__ == "__main__":
+if _name_ == "_main_":
     start_mcp()
-
